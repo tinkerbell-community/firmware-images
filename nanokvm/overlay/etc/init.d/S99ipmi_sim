@@ -1,0 +1,53 @@
+#!/bin/sh
+
+# shellcheck source=/dev/null
+. /etc/profile
+
+PIDFILE=/var/run/ipmi_sim.pid
+
+start() {
+	if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+		echo "ipmi_sim is already running (pid $(cat "$PIDFILE"))"
+		return 1
+	fi
+	ipmi_sim -f /etc/ipmi/ipmisim1.emu -c /etc/ipmi/lan.conf -n >/dev/null 2>&1 &
+	echo $! > "$PIDFILE"
+}
+
+stop() {
+	if [ -f "$PIDFILE" ]; then
+		kill "$(cat "$PIDFILE")" 2>/dev/null
+		rm -f "$PIDFILE"
+	else
+		echo "ipmi_sim is not running"
+		return 1
+	fi
+}
+
+status() {
+	if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+		echo "ipmi_sim is running (pid $(cat "$PIDFILE"))"
+	else
+		echo "ipmi_sim is not running"
+		return 1
+	fi
+}
+
+restart() {
+	stop
+	start
+}
+
+if [ "${1}" = "start" ]
+then
+	start
+elif [ "${1}" = "stop" ]
+then
+	stop
+elif [ "${1}" = "restart" ]
+then
+	restart
+elif [ "${1}" = "status" ]
+then
+	status
+fi
