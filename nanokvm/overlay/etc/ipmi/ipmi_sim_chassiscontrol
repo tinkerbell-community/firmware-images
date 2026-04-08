@@ -26,111 +26,105 @@ prog=$0
 
 device=$1
 if [ "${device}" = "" ]; then
-    echo "No device given"
-    exit 1;
+  echo "No device given"
+  exit 1
 fi
 shift
 
 op=$1
 if [ "${op}" = "" ]; then
-    echo "No operation given"
-    exit 1
+  echo "No operation given"
+  exit 1
 fi
 shift
 
 do_get() {
-    while [ "$1" != "" ]; do
-	case $1 in
-	    power)
-		val="$(ssh -q root@10.0.92.76 swctrl poe show id 25 | tail -n1 | awk '{$1=$1;print}' | cut -d' ' -f2 | grep -q "^Auto$" && echo 1 || echo 0)"
-		;;
+  while [ "$1" != "" ]; do
+    case $1 in
+    power)
+      val="$(ssh -q root@10.0.92.76 swctrl poe show id 25 | tail -n1 | awk '{$1=$1;print}' | cut -d' ' -f2 | grep -q "^Auto$" && echo 1 || echo 0)"
+      ;;
 
-	    boot)
-		val=default
-		;;
+    boot)
+      val=default
+      ;;
 
-	    # Note that reset has no get
+    # Note that reset has no get
 
-	    *)
-		echo "Invalid parameter: $1"
-		exit 1
-		;;
-	esac
+    *)
+      echo "Invalid parameter: $1"
+      exit 1
+      ;;
+    esac
 
-	echo "$1:${val}"
-	shift
-    done
+    echo "$1:${val}"
+    shift
+  done
 }
 
 do_set() {
-    while [ "$1" != "" ]; do
-	parm="$1"
-	shift
-	if [ "$1" = "" ]; then
-	    echo "No value present for parameter ${parm}"
-	    exit 1
-	fi
-	val="$1"
-	shift
+  while [ "$1" != "" ]; do
+    parm="$1"
+    shift
+    if [ "$1" = "" ]; then
+      echo "No value present for parameter ${parm}"
+      exit 1
+    fi
+    val="$1"
+    shift
 
-	case ${parm} in
-	    power)
-		;;
+    case ${parm} in
+    power) ;;
 
-	    reset)
-		;;
+    reset) ;;
 
-	    boot)
-		case ${val} in
-		    none)
-			;;
-		    pxe)
-			;;
-	            cdrom)
-			;;
-		    bios)
-		        ;;
-		    default)
-	               ;;
-		    *)
-			echo "Invalid boot value: ${val}"
-			exit 1
-			;;
-		esac
-		;;
+    boot)
+      case ${val} in
+      none) ;;
+      pxe) ;;
+      cdrom) ;;
+      bios) ;;
+      default) ;;
+      *)
+        echo "Invalid boot value: ${val}"
+        exit 1
+        ;;
+      esac
+      ;;
 
-            identify)
-		interval=${val}
-		force=$1
-		shift
-		;;
+    identify)
+      interval=${val}
+      force=$1
+      shift
+      ;;
 
-	    *)
-		echo "Invalid parameter: ${parm}"
-		exit 1
-		;;
-	esac
-    done
+    *)
+      echo "Invalid parameter: ${parm}"
+      exit 1
+      ;;
+    esac
+  done
 }
 
 do_check() {
-    # Check is not supported for chassis control
-    exit 1
+  # Check is not supported for chassis control
+  exit 1
 }
 
 case ${op} in
-    get)
-	do_get $@
-	;;
-    set)
-	do_set $@
-	;;
+get)
+  do_get $@
+  ;;
+set)
+  do_set $@
+  ;;
 
-    check)
-	do_check $@
-	;;
+check)
+  do_check $@
+  ;;
 
 *)
-	echo "Unknown operation: ${op}"
-	exit 1
+  echo "Unknown operation: ${op}"
+  exit 1
+  ;;
 esac
