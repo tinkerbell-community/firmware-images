@@ -38,32 +38,32 @@
 prog=$0
 
 device=$1
-if [ "$device" = "" ]; then
+if [ "${device}" = "" ]; then
     echo "No device given"
     exit 1;
 fi
 shift
 
 op=$1
-if [ "x$op" = "x" ]; then
+if [ "${op}" = "" ]; then
     echo "No operation given"
     exit 1
 fi
 shift
 
 do_get() {
-    while [ "x$1" != "x" ]; do
+    while [ "$1" != "" ]; do
 	case $1 in
 	    ip_addr)
-		val=`ifconfig $device | grep '^ *inet addr:' | tr ':' ' ' | sed 's/.*inet addr \([0-9.]*\).*$/\1/'`
-		if [ "x$val" = "x" ]; then
+		val=$(ifconfig "${device}" | grep '^ *inet addr:' | tr ':' ' ' | sed 's/.*inet addr \([0-9.]*\).*$/\1/')
+		if [ "${val}" = "" ]; then
 		    val="0.0.0.0"
 		fi
 		;;
 
 	    ip_addr_src)
-		val=`grep "iface $device inet" /etc/network/interfaces | tr ' ' '\t' | tr -s '\t' '\t' | cut -f 4`
-		case "x$val" in
+		val=$(grep "iface ${device} inet" /etc/network/interfaces | tr ' ' '\t' | tr -s '\t' '\t' | cut -f 4)
+		case "x${val}" in
 		    xstatic)
 			;;
 		    xdhcp)
@@ -75,33 +75,33 @@ do_get() {
 		;;
 
 	    mac_addr)
-		val=`ifconfig $device | grep 'HWaddr' | sed 's/.*HWaddr \([0-9a-f:]*\).*$/\1/'`
-		if [ "x$val" = "x" ]; then
+		val=$(ifconfig "${device}" | grep 'HWaddr' | sed 's/.*HWaddr \([0-9a-f:]*\).*$/\1/')
+		if [ "${val}" = "" ]; then
 		    val="00:00:00:00:00:00"
 		fi
 		;;
 
 	    subnet_mask)
-		val=`ifconfig $device | grep '^ *inet addr:' | tr ':' ' ' | sed 's/.*Mask \([0-9.]*\).*$/\1/'`
-		if [ "x$val" = "x" ]; then
+		val=$(ifconfig "${device}" | grep '^ *inet addr:' | tr ':' ' ' | sed 's/.*Mask \([0-9.]*\).*$/\1/')
+		if [ "${val}" = "" ]; then
 		    val="0.0.0.0"
 		fi
 		;;
 
 	    default_gw_ip_addr)
-		val=`route -n | grep '^0\.0\.0\.0' | grep 'eth1$' | tr ' ' '\t' | tr -s '\t' '\t' | cut -f 2`
-		if [ "x$val" = "x" ]; then
+		val=$(route -n | grep '^0\.0\.0\.0' | grep 'eth1$' | tr ' ' '\t' | tr -s '\t' '\t' | cut -f 2)
+		if [ "${val}" = "" ]; then
 		    val="0.0.0.0"
 		fi
 		;;
 
 	    default_gw_mac_addr)
-		val=`route -n | grep '^0\.0\.0\.0' | grep "$device\$" | tr ' ' '\t' | tr -s '\t' '\t' | cut -s -f 2`
-		if [ "x$val" = "x" ]; then
+		val=$(route -n | grep '^0\.0\.0\.0' | grep "${device}\$" | tr ' ' '\t' | tr -s '\t' '\t' | cut -s -f 2)
+		if [ "${val}" = "" ]; then
 		    val="00:00:00:00:00:00"
 		else
-		    val=`arp -n $val | grep "^$val" | tr ' ' '\t' | tr -s '\t' '\t' | cut -f 3 | tr -d -c '0-9a-f:'`
-		    if [ "x$val" = "x" ]; then
+		    val=$(arp -n "${val}" | grep "^${val}" | tr ' ' '\t' | tr -s '\t' '\t' | cut -f 3 | tr -d -c '0-9a-f:')
+		    if [ "${val}" = "" ]; then
 			val="00:00:00:00:00:00"
 		    fi
 		fi
@@ -121,23 +121,23 @@ do_get() {
 		;;
 	esac
 
-	echo "$1:$val"
+	echo "$1:${val}"
 	shift
     done
 }
 
 do_set() {
-    while [ "x$1" != "x" ]; do
+    while [ "$1" != "" ]; do
 	parm="$1"
 	shift
-	if [ "x$1" = "x" ]; then
-	    echo "No value present for parameter $parm"
+	if [ "$1" = "" ]; then
+	    echo "No value present for parameter ${parm}"
 	    exit 1
 	fi
 	val="$1"
 	shift
 
-	case $parm in
+	case ${parm} in
 	    ip_addr)
 		;;
 
@@ -171,10 +171,10 @@ do_set() {
 }
 
 do_check() {
-    while [ "x$1" != "x" ]; do
+    while [ "$1" != "" ]; do
 	parm="$1"
 	shift
-	case $parm in
+	case ${parm} in
 	    ip_addr_src)
 		# We only support static and dhcp IP address sources
 		case $1 in
@@ -190,7 +190,7 @@ do_check() {
 		;;
 
 	    *)
-		echo "Invalid parameter: $parm"
+		echo "Invalid parameter: ${parm}"
 		exit 1
 		;;
 	esac
@@ -198,7 +198,7 @@ do_check() {
     done
 }
 
-case $op in
+case ${op} in
     get)
 	do_get $@
 	;;
@@ -211,6 +211,6 @@ case $op in
 	;;
 
 *)
-	echo "Unknown operation: $op"
+	echo "Unknown operation: ${op}"
 	exit 1
 esac
