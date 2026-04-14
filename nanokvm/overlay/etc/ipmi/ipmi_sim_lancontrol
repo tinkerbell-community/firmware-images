@@ -35,7 +35,7 @@
 # committing it.  It is only implemented for the ip_addr_src parm.
 #
 
-prog=$0
+# prog=$0
 
 device=$1
 if [ "${device}" = "" ]; then
@@ -63,9 +63,9 @@ do_get() {
 
     ip_addr_src)
       val=$(grep "iface ${device} inet" /etc/network/interfaces | tr ' ' '\t' | tr -s '\t' '\t' | cut -f 4)
-      case "x${val}" in
-      xstatic) ;;
-      xdhcp) ;;
+      case "${val}" in
+      static) ;;
+      dhcp) ;;
       *)
         val="unknown"
         ;;

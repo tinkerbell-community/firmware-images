@@ -22,7 +22,7 @@
 #
 # The value for boot is either "none", "pxe" or "default".
 
-prog=$0
+# prog=$0
 
 device=$1
 if [ "${device}" = "" ]; then
@@ -42,7 +42,7 @@ do_get() {
   while [ "$1" != "" ]; do
     case $1 in
     power)
-      val="$(ssh -q root@10.0.92.76 swctrl poe show id 25 | tail -n1 | awk '{$1=$1;print}' | cut -d' ' -f2 | grep -q "^Auto$" && echo 1 || echo 0)"
+      val="$(ssh -q "${UNIFI_USER}"@"${UNIFI_HOST}" swctrl poe show id "${UNIFI_PORT}" | tail -n1 | awk '{$1=$1;print}' | cut -d' ' -f2 | grep -q '^Auto$' && echo 1 || echo 0)"
       ;;
 
     boot)
@@ -74,9 +74,24 @@ do_set() {
     shift
 
     case ${parm} in
-    power) ;;
+    power)
+      case ${val} in
+      0)
+        ssh -q "${UNIFI_USER}"@"${UNIFI_HOST}" swctrl poe set off id "${UNIFI_PORT}"
+        ;;
+      1)
+        ssh -q "${UNIFI_USER}"@"${UNIFI_HOST}" swctrl poe set auto id "${UNIFI_PORT}"
+        ;;
+      *)
+        echo "Invalid power value: ${val}"
+        exit 1
+        ;;
+      esac
+      ;;
 
-    reset) ;;
+    reset)
+      ssh -q "${UNIFI_USER}"@"${UNIFI_HOST}" swctrl poe restart id "${UNIFI_PORT}"
+      ;;
 
     boot)
       case ${val} in
@@ -93,8 +108,8 @@ do_set() {
       ;;
 
     identify)
-      interval=${val}
-      force=$1
+      # interval=${val}
+      # force=$1
       shift
       ;;
 
@@ -113,14 +128,14 @@ do_check() {
 
 case ${op} in
 get)
-  do_get $@
+  do_get "$@"
   ;;
 set)
-  do_set $@
+  do_set "$@"
   ;;
 
 check)
-  do_check $@
+  do_check "$@"
   ;;
 
 *)

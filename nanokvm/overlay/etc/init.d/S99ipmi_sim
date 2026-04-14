@@ -3,51 +3,65 @@
 # shellcheck source=/dev/null
 . /etc/profile
 
-PIDFILE=/var/run/ipmi_sim.pid
+DAEMON="ipmi_sim"
+PIDFILE="/var/run/${DAEMON}.pid"
+STATEDIR="/var/ipmi_sim"
+LOGFILE="/var/log/${DAEMON}.log"
+DAEMON_ARGS="-n -f /etc/ipmi/ipmisim1.emu -c /etc/ipmi/lan.conf -s ${STATEDIR}/ipmisim1"
 
 start() {
 	if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-		echo "ipmi_sim is already running (pid $(cat "$PIDFILE"))"
+		echo "${DAEMON} is already running (pid $(cat "$PIDFILE"))"
 		return 1
 	fi
-	ipmi_sim -f /etc/ipmi/ipmisim1.emu -c /etc/ipmi/lan.conf -n >/dev/null 2>&1 &
-	echo $! > "$PIDFILE"
+	mkdir -p "$STATEDIR"
+	printf "Starting %s: " "$DAEMON"
+	# shellcheck disable=SC2086
+	start-stop-daemon -S -q -b -m -p "$PIDFILE" \
+		-x "/usr/bin/${DAEMON}" -- $DAEMON_ARGS
+	status=$?
+	if [ "$status" -eq 0 ]; then
+		echo "OK"
+	else
+		echo "FAIL"
+	fi
+	return "$status"
 }
 
 stop() {
-	if [ -f "$PIDFILE" ]; then
-		kill "$(cat "$PIDFILE")" 2>/dev/null
+	printf "Stopping %s: " "$DAEMON"
+	start-stop-daemon -K -q -p "$PIDFILE"
+	status=$?
+	if [ "$status" -eq 0 ]; then
 		rm -f "$PIDFILE"
+		echo "OK"
 	else
-		echo "ipmi_sim is not running"
-		return 1
+		echo "FAIL"
 	fi
+	return "$status"
 }
 
 status() {
 	if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-		echo "ipmi_sim is running (pid $(cat "$PIDFILE"))"
+		echo "${DAEMON} is running (pid $(cat "$PIDFILE"))"
 	else
-		echo "ipmi_sim is not running"
+		echo "${DAEMON} is not running"
 		return 1
 	fi
 }
 
 restart() {
 	stop
+	sleep 1
 	start
 }
 
-if [ "${1}" = "start" ]
-then
-	start
-elif [ "${1}" = "stop" ]
-then
-	stop
-elif [ "${1}" = "restart" ]
-then
-	restart
-elif [ "${1}" = "status" ]
-then
-	status
-fi
+case "$1" in
+	start|stop|restart|status)
+		"$1"
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart|status}"
+		exit 1
+		;;
+esac
