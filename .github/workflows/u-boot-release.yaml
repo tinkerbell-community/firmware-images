@@ -3,79 +3,66 @@ name: Build and Release U-Boot Raspberry Pi Image
 on:
   workflow_dispatch:
     inputs:
-      uboot_version:
+      uboot:
         description: "U-Boot version tag to build"
         required: false
         type: string
-      rpi_firmware_version:
+      firmware:
         description: "Raspberry Pi firmware version"
         required: false
         type: string
-      rpi_kernel_version:
+      kernel:
         description: "Raspberry Pi kernel version tag for building device tree files"
         required: false
         type: string
   push:
     tags:
       - 'u-boot-v*'
-
-env:
-  UBOOT_VERSION: ${{ inputs.uboot_version || 'v2026.04' }}
-  RPI_FIRMWARE_VERSION: ${{ inputs.rpi_firmware_version || 'next' }}
-  RPI_KERNEL_VERSION: ${{ inputs.rpi_kernel_version || 'rpi-6.19.y' }}
+    paths:
+      - 'u-boot/**'
 
 jobs:
   determine-version:
     runs-on: ubuntu-latest
     outputs:
-      release_version: ${{ steps.version.outputs.release_version }}
+      release: ${{ steps.version.outputs.release }}
+      uboot: ${{ steps.version.outputs.uboot }}
+      firmware: ${{ steps.version.outputs.firmware }}
+      kernel: ${{ steps.version.outputs.kernel }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Required to get all tags
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Get latest tag with U-Boot version prefix
-        id: previoustag
-        uses: WyriHaximus/github-action-get-previous-tag@v1
-        continue-on-error: true
-        with:
-          prefix: u-boot-${{ env.UBOOT_VERSION }}  # Match tags like u-boot-v2026.04.0
-
-      - name: Calculate next version
+      - name: Read versions from file
         id: version
         run: |
-          UBOOT_VER="${{ env.UBOOT_VERSION }}"
+          VERSION_FILE="u-boot/version"
 
-          # Check if we got a previous tag
-          if [ "${{ steps.previoustag.outcome }}" == "success" ] && [ -n "${{ steps.previoustag.outputs.tag }}" ]; then
-            PREV_TAG="${{ steps.previoustag.outputs.tag }}"
-            echo "Found previous tag: $PREV_TAG"
+          # Parse values from version file
+          FILE_UBOOT_VER=$(grep '^uboot ' "$VERSION_FILE" | awk '{print $2}')
+          FILE_FIRMWARE_VER=$(grep '^firmware ' "$VERSION_FILE" | awk '{print $2}')
+          FILE_KERNEL_VER=$(grep '^kernel ' "$VERSION_FILE" | awk '{print $2}')
 
-            # Extract version numbers (remove 'u-boot-v' prefix)
-            PREV_VERSION="${PREV_TAG#u-boot-v}"
+          # Use workflow_dispatch inputs if provided, otherwise use file values
+          uboot="${{ inputs.uboot }}"
+          uboot="${uboot:-$FILE_UBOOT_VER}"
 
-            # Split into parts
-            IFS='.' read -ra PARTS <<< "$PREV_VERSION"
-            MAJOR="${PARTS[0]}"
-            MINOR="${PARTS[1]}"
-            PATCH="${PARTS[2]:-0}"
+          firmware="${{ inputs.firmware }}"
+          firmware="${firmware:-$FILE_FIRMWARE_VER}"
 
-            # Increment patch version
-            NEW_PATCH=$((PATCH + 1))
-            RELEASE_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
+          kernel="${{ inputs.kernel }}"
+          kernel="${kernel:-$FILE_KERNEL_VER}"
 
-            echo "Incremented from $PREV_VERSION to $RELEASE_VERSION"
-          else
-            # No previous tag found, start with .0
-            RELEASE_VERSION="${UBOOT_VER#v}.0"
-            echo "No previous tag found, starting with $RELEASE_VERSION"
-          fi
+          release="u-boot-${uboot}"
 
-          echo "release_version=$RELEASE_VERSION" >> $GITHUB_OUTPUT
-          echo "Final release version: $RELEASE_VERSION"
+          echo "uboot=$uboot" >> $GITHUB_OUTPUT
+          echo "firmware=$firmware" >> $GITHUB_OUTPUT
+          echo "kernel=$kernel" >> $GITHUB_OUTPUT
+          echo "release=$release" >> $GITHUB_OUTPUT
+          echo "Release version: $release"
 
   build-uboot:
     needs: determine-version
@@ -102,7 +89,7 @@ jobs:
           repository: u-boot/u-boot
           fetch-depth: 1
           path: u-boot
-          ref: ${{ env.UBOOT_VERSION }}
+          ref: ${{ needs.determine-version.outputs.uboot }}
 
       - name: Cache and install build dependencies
         uses: awalsh128/cache-apt-pkgs-action@latest
@@ -144,7 +131,7 @@ jobs:
           repository: raspberrypi/firmware
           fetch-depth: 1
           path: firmware
-          ref: ${{ env.RPI_FIRMWARE_VERSION }}
+          ref: ${{ needs.determine-version.outputs.firmware }}
 
       - name: Upload firmware
         uses: actions/upload-artifact@v4
@@ -204,7 +191,7 @@ jobs:
           repository: raspberrypi/linux
           fetch-depth: 1
           path: firmware
-          ref: ${{ env.RPI_KERNEL_VERSION }}
+          ref: ${{ needs.determine-version.outputs.kernel }}
 
       - name: Download and patch Raspberry Pi kernel source
         working-directory: firmware
@@ -283,7 +270,7 @@ jobs:
       image_size: ${{ steps.create_image.outputs.image_size }}
       iso_name: ${{ steps.create_iso.outputs.iso_name }}
       iso_size: ${{ steps.create_iso.outputs.iso_size }}
-      release_version: ${{ needs.determine-version.outputs.release_version }}
+      release: ${{ needs.determine-version.outputs.release }}
 
     steps:
       - name: Download all artifacts
@@ -332,7 +319,7 @@ jobs:
         id: create_image
         working-directory: out
         env:
-          RELEASE_VERSION: ${{ needs.determine-version.outputs.release_version }}
+          release: ${{ needs.determine-version.outputs.release }}
         run: |
           # Calculate required size (boot files + 100MB padding)
           BOOT_SIZE=$(du -sm ../build | cut -f1)
@@ -341,7 +328,7 @@ jobs:
           echo "Creating ${IMAGE_SIZE}MB image..."
 
           # Create image file with semantic version
-          IMAGE_NAME="uboot-raspberrypi-${RELEASE_VERSION}.img"
+          IMAGE_NAME="uboot-raspberrypi-${release}.img"
           dd if=/dev/zero of="$IMAGE_NAME" bs=1M count=$IMAGE_SIZE status=progress
 
           # Create partition table with proper type for Pi 5
@@ -386,9 +373,9 @@ jobs:
         id: create_iso
         working-directory: out
         env:
-          RELEASE_VERSION: ${{ needs.determine-version.outputs.release_version }}
+          release: ${{ needs.determine-version.outputs.release }}
         run: |
-          ISO_NAME="uboot-raspberrypi-${RELEASE_VERSION}.iso"
+          ISO_NAME="uboot-raspberrypi-${release}.iso"
 
           genisoimage \
             -o "$ISO_NAME" \
@@ -417,17 +404,17 @@ jobs:
       - name: Create release notes
         working-directory: out
         env:
-          RELEASE_VERSION: ${{ needs.determine-version.outputs.release_version }}
+          release: ${{ needs.determine-version.outputs.release }}
         run: |
           cat > release_notes.md << EOF
           # Raspberry Pi 4 U-Boot SD Card Image
 
           ## Components
 
-          - **U-Boot Version**: \`${{ env.UBOOT_VERSION }}\`
-          - **Release Version**: \`${RELEASE_VERSION}\`
-          - **Raspberry Pi Firmware**: \`${{ env.RPI_FIRMWARE_VERSION }}\`
-          - **Raspberry Pi Kernel DTBs**: \`${{ env.RPI_KERNEL_VERSION }}\`
+          - **U-Boot Version**: \`${{ needs.determine-version.outputs.uboot }}\`
+          - **Release Version**: \`${release}\`
+          - **Raspberry Pi Firmware**: \`${{ needs.determine-version.outputs.firmware }}\`
+          - **Raspberry Pi Kernel DTBs**: \`${{ needs.determine-version.outputs.kernel }}\`
           - **Architecture**: ARM64 (aarch64)
           - **Target Device**: Raspberry Pi 4 / Raspberry Pi 400
 
@@ -526,16 +513,16 @@ jobs:
 
       - name: Report build status
         env:
-          RELEASE_VERSION: ${{ needs.determine-version.outputs.release_version }}
+          release: ${{ needs.determine-version.outputs.release }}
         run: |
           echo "✅ U-Boot SD card image created successfully"
           echo "📦 SD Image: ${{ steps.create_image.outputs.image_name }}.xz"
           echo "📏 SD Uncompressed size: ${{ steps.create_image.outputs.image_size }} bytes"
           echo "📦 ISO Image: ${{ steps.create_iso.outputs.iso_name }}"
           echo "📏 ISO Uncompressed size: ${{ steps.create_iso.outputs.iso_size }} bytes"
-          echo "🔖 U-Boot version: ${{ env.UBOOT_VERSION }}"
-          echo "🔖 Release version: ${RELEASE_VERSION}"
-          echo "🔖 Firmware version: ${{ env.RPI_FIRMWARE_VERSION }}"
+          echo "🔖 U-Boot version: ${{ needs.determine-version.outputs.uboot }}"
+          echo "🔖 Release version: ${release}"
+          echo "🔖 Firmware version: ${{ needs.determine-version.outputs.firmware }}"
 
   publish-github-release:
     name: Publish GitHub Release
@@ -555,8 +542,8 @@ jobs:
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: u-boot-v${{ needs.build-image.outputs.release_version }}
-          name: Release u-boot-v${{ needs.build-image.outputs.release_version }}
+          tag_name: ${{ needs.build-image.outputs.release }}
+          name: Release ${{ needs.build-image.outputs.release }}
           body_path: artifacts/release_notes.md
           files: |
             artifacts/${{ needs.build-image.outputs.image_name }}.xz
