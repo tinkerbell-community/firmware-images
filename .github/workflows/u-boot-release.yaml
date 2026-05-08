@@ -326,7 +326,7 @@ jobs:
           echo "Creating ${IMAGE_SIZE}MB image..."
 
           # Create image file with semantic version
-          IMAGE_NAME="uboot-raspberrypi-${release}.img"
+          IMAGE_NAME="uboot-rpi.img"
           dd if=/dev/zero of="$IMAGE_NAME" bs=1M count=$IMAGE_SIZE status=progress
 
           # Create partition table with proper type for Pi 5
@@ -373,7 +373,7 @@ jobs:
         env:
           release: ${{ needs.determine-version.outputs.release }}
         run: |
-          ISO_NAME="uboot-raspberrypi-${release}.iso"
+          ISO_NAME="uboot-rpi.iso"
 
           genisoimage \
             -o "$ISO_NAME" \
