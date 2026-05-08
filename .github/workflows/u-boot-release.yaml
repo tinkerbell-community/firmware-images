@@ -298,7 +298,6 @@ jobs:
           echo "Copying patched kernel device tree files..."
           mkdir -p build/broadcom
           cp -r artifacts/kernel-dts/*.dtb build/broadcom/
-          cp -r artifacts/kernel-dts/*.dtb build/
 
           mkdir -p build/overlays
           cp -r artifacts/kernel-dts/overlays/. build/overlays/
