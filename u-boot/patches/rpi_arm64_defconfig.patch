@@ -1,8 +1,8 @@
 diff --git a/arch/arm/dts/Makefile b/arch/arm/dts/Makefile
-index e79cfb4b633..893fa34491a 100644
+index 82ad3035308..5d97c94cbec 100644
 --- a/arch/arm/dts/Makefile
 +++ b/arch/arm/dts/Makefile
-@@ -1016,7 +1016,9 @@ dtb-$(CONFIG_ARCH_BCM283X) += \
+@@ -1025,7 +1025,9 @@ dtb-$(CONFIG_ARCH_BCM283X) += \
  	bcm2837-rpi-3-b.dtb \
  	bcm2837-rpi-3-b-plus.dtb \
  	bcm2837-rpi-cm3-io3.dtb \
@@ -15,10 +15,10 @@ index e79cfb4b633..893fa34491a 100644
  
 diff --git a/arch/arm/dts/bcm2712-rpi-5-b-u-boot.dtsi b/arch/arm/dts/bcm2712-rpi-5-b-u-boot.dtsi
 new file mode 100644
-index 00000000000..36b30a72172
+index 00000000000..b09b29f608c
 --- /dev/null
 +++ b/arch/arm/dts/bcm2712-rpi-5-b-u-boot.dtsi
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,91 @@
 +/* * PCIe DMA Override
 + *
 + * U-Boot's dm_pci_bus_to_phys() cannot parse the upstream dma-ranges which
@@ -34,33 +34,23 @@ index 00000000000..36b30a72172
 + * pcie2: upstream has 0x02000000 + 0x43000000 + MIP0 → single 0x43000000
 + */
 +&pcie1 {
-+    dma-ranges = <0x43000000 0x10 0x00000000  0x0 0x00000000  0x10 0x00000000>;
++    dma-ranges = <0x43000000 0x0 0x00000000  0x0 0x00000000  0x4 0x00000000>;
 +};
 +
-+/* * RP1 Southbridge — PCIe2 overrides
-+ *
-+ * The RP1 south bridge sits behind pcie2 as a PCI endpoint (dev@0,0)
-+ * inside a virtual PCI-PCI bridge (pci@0,0).
-+ *
-+ * DMA path: RP1 peripheral → pci_ep_bus dma-ranges (bus 0x10_0000_0000
-+ * → PCIe 0x10_0000_0000) → dev@0,0 (passthrough, no dma-ranges) →
-+ * pci@0,0 (passthrough) → pcie2 dma-ranges (PCIe 0x10_0000_0000 →
-+ * CPU 0x0).  We must NOT add dma-ranges to dev@0,0 — upstream omits
-+ * them intentionally so addresses pass through unchanged.
-+ *
-+ * bootph-all on pci@0,0 and dev@0,0 ensures U-Boot's driver model
-+ * probes through the full PCIe → PCI bridge → RP1 chain.
-+ */
 +&pcie2 {
-+    dma-ranges = <0x43000000 0x10 0x00000000  0x0 0x00000000  0x10 0x00000000>;
++    dma-ranges = <0x43000000 0x0 0x00000000  0x0 0x00000000  0x4 0x00000000>;
++};
 +
-+    pci@0,0 {
-+        bootph-all;
-+
-+        dev@0,0 {
-+            bootph-all;
-+        };
-+    };
++/* * 2. RP1 Southbridge Node 
++ * This bridges the internal RP1 bus to the external PCIe link.
++ */
++&rp1_nexus {
++    bootph-all;
++    
++    /* * Pass-through DMA Ranges.
++     * This tells U-Boot: "Addresses on the RP1 internal bus map 1:1 to the PCIe bus."
++     */
++    dma-ranges = <0x43000000 0x0 0x00000000  0x43000000 0x0 0x00000000  0x4 0x00000000>;
 +};
 +
 +/* * 3. RP1 Peripheral Aliases 
@@ -277,7 +267,7 @@ index a86875b1833..d49c9f59fb2 100644
  #define PCIE_MISC_HARD_PCIE_HARD_DEBUG_SERDES_IDDQ_MASK         0x08000000
  
 diff --git a/arch/arm/mach-bcm283x/init.c b/arch/arm/mach-bcm283x/init.c
-index 7a1de22e0ae..34d34ea2311 100644
+index 7a1de22e0ae..97a6b9aa5b3 100644
 --- a/arch/arm/mach-bcm283x/init.c
 +++ b/arch/arm/mach-bcm283x/init.c
 @@ -18,7 +18,7 @@
@@ -289,18 +279,11 @@ index 7a1de22e0ae..34d34ea2311 100644
  
  static struct mm_region bcm283x_mem_map[MEM_MAP_MAX_ENTRIES] = {
  	{
-@@ -76,15 +76,42 @@ static struct mm_region bcm2712_mem_map[MEM_MAP_MAX_ENTRIES] = {
+@@ -76,15 +76,35 @@ static struct mm_region bcm2712_mem_map[MEM_MAP_MAX_ENTRIES] = {
  		.attrs = PTE_BLOCK_MEMTYPE(MT_NORMAL) |
  			 PTE_BLOCK_INNER_SHARE
  	}, {
 -		/* Beginning of AXI bus where uSD controller lives */
-+		/* Remaining DRAM (1GiB - 16GiB); all BCM2712 MMIO is above 64GiB */
-+		.virt = 0x40000000UL,
-+		.phys = 0x40000000UL,
-+		.size = 0x3c0000000UL,
-+		.attrs = PTE_BLOCK_MEMTYPE(MT_NORMAL) |
-+			 PTE_BLOCK_INNER_SHARE
-+	}, {
 +		/* AXI/PCIe address space - contains PCIe controllers and peripherals
 +		 * Maps 0x1000000000-0x1100000000 (4GB range)
 +		 */
@@ -386,7 +369,7 @@ index 1dc7ce50d1d..3532a980b75 100644
  
  void __efi_runtime EFIAPI efi_reset_system(
 diff --git a/board/raspberrypi/rpi/rpi.c b/board/raspberrypi/rpi/rpi.c
-index b0a1484c0fa..c9e58493627 100644
+index b0a1484c0fa..bd8897a1cfa 100644
 --- a/board/raspberrypi/rpi/rpi.c
 +++ b/board/raspberrypi/rpi/rpi.c
 @@ -9,27 +9,35 @@
@@ -436,54 +419,68 @@ index b0a1484c0fa..c9e58493627 100644
  	printf("RPI %s (0x%x)\n", model->name, revision);
  }
  
-@@ -607,10 +619,24 @@ void  update_fdt_from_fw(void *fdt, void *fw_fdt)
- 	copy_property(fdt, fw_fdt, "/reserved-memory/linux,cma", "size");
+@@ -644,6 +656,60 @@ int ft_board_setup(void *blob, struct bd_info *bd)
+ 	else
+ 		update_fdt_from_fw(blob, (void *)gd->fdt_blob);
  
- 	/* Adjust dma-ranges for the SD card and PCI bus as they can depend on
--	 * the SoC revision
-+	 * the SoC revision.
-+	 *
-+	 * RPi4 (BCM2711): emmc2bus and pcie0 are exposed as firmware aliases.
-+	 *
-+	 * RPi5 (BCM2712): the firmware DT has no pcie0/1/2 aliases, so the
-+	 * alias-based calls silently fail.  Use the absolute AXI paths instead:
-+	 *   pcie0 @ 1000100000  — first PCIe root port
-+	 *   pcie1 @ 1000110000  — second PCIe root port (NVMe)
-+	 *   pcie2 @ 1000120000  — third PCIe root port (RP1 southbridge)
-+	 * All three need their firmware-provided dma-ranges because the firmware
-+	 * adjusts them based on silicon revision.
- 	 */
--	copy_property(fdt, fw_fdt, "emmc2bus", "dma-ranges");
--	copy_property(fdt, fw_fdt, "pcie0", "dma-ranges");
-+	copy_property(fdt, fw_fdt, "emmc2bus", "dma-ranges");	/* RPi4 */
-+	copy_property(fdt, fw_fdt, "pcie0", "dma-ranges");	/* RPi4 alias */
-+	/* RPi5 absolute paths (no pcie aliases in firmware DT) */
-+	copy_property(fdt, fw_fdt, "/axi/pcie@1000100000", "dma-ranges");
-+	copy_property(fdt, fw_fdt, "/axi/pcie@1000110000", "dma-ranges");
-+	copy_property(fdt, fw_fdt, "/axi/pcie@1000120000", "dma-ranges");
- 
- 	/* Bootloader configuration template exposes as nvmem */
- 	if (copy_property(fdt, fw_fdt, "blconfig", "reg") == 0)
-@@ -625,8 +651,17 @@ void  update_fdt_from_fw(void *fdt, void *fw_fdt)
- 	/* firmware logs - used by the vclog utility */
- 	copy_property(fdt, fw_fdt, "/chosen", "log");
- 
--	/* address of the PHY device as provided by the firmware  */
-+	/* MAC address set by firmware on both RPi4 (GENET) and RPi5 (RP1 GEM) */
-+	copy_property(fdt, fw_fdt, "ethernet0", "local-mac-address");
-+	/* PHY address as provided by the firmware */
-+	/* RPi4: GENET internal MDIO controller at register offset 0xe14 */
- 	copy_property(fdt, fw_fdt, "ethernet0/mdio@e14/ethernet-phy@1", "reg");
++#ifdef CONFIG_BCM2712
 +	/*
-+	 * RPi5: RP1 GEM (raspberrypi,rp1-gem / cdns,macb).  In both the
-+	 * firmware DT and the upstream raspberrypi/linux 6.18 DT, phy1 is a
-+	 * direct child of rp1_eth — there is no intermediate mdio subnode.
++	 * BCM2712 (RPi 5) — enable MIP MSI controllers in the kernel DTB.
++	 *
++	 * The MIP nodes (msi-controller@10001300{0,1}000) are shipped as
++	 * status="disabled" in both the VPU firmware DTB (downstream
++	 * compatible "brcm,bcm2712-mip-intc") and some upstream layouts
++	 * (compatible "brcm,bcm2712-mip").  Linux's brcm-pcie driver needs
++	 * them enabled to register the MSI domain on pcie2; otherwise
++	 * rp1_pci probe fails with -ENOTSUPP (-524) because
++	 * pci_alloc_irq_vectors() cannot allocate MSI-X vectors.
 +	 */
-+	copy_property(fdt, fw_fdt, "ethernet0/ethernet-phy@1", "reg");
- 
- 	/* Bluetooth device address as provided by the firmware */
- 	copy_property(fdt, fw_fdt, "/soc/serial@7e201000/bluetooth", "local-bd-address");
-@@ -661,11 +696,330 @@ int ft_board_setup(void *blob, struct bd_info *bd)
++	{
++		static const char * const mip_compats[] = {
++			"brcm,bcm2712-mip",
++			"brcm,bcm2712-mip-intc",
++		};
++		int patched = 0;
++		int i;
++
++		for (i = 0; i < ARRAY_SIZE(mip_compats); i++) {
++			node = -1;
++			while ((node = fdt_node_offset_by_compatible(blob, node,
++					mip_compats[i])) >= 0) {
++				const char *status;
++				const char *name;
++				int ret;
++
++				status = fdt_getprop(blob, node, "status", NULL);
++				name = fdt_get_name(blob, node, NULL);
++
++				if (!status || !strcmp(status, "okay")) {
++					log_debug("rpi: MIP %s already okay\n",
++						  name ?: "?");
++					continue;
++				}
++
++				ret = fdt_setprop_string(blob, node, "status",
++							 "okay");
++				if (ret) {
++					log_warning("rpi: failed to enable MIP %s: %d\n",
++						    name ?: "?", ret);
++					continue;
++				}
++				log_info("rpi: enabled MIP %s (compat %s)\n",
++					 name ?: "?", mip_compats[i]);
++				patched++;
++			}
++		}
++		if (!patched)
++			log_info("rpi: no disabled MIP MSI nodes found in DTB\n");
++	}
++#endif
++
+ 	if (CONFIG_IS_ENABLED(FDT_SIMPLEFB)) {
+ 		node = fdt_node_offset_by_compatible(blob, -1, "simple-framebuffer");
+ 		if (node < 0)
+@@ -661,11 +727,330 @@ int ft_board_setup(void *blob, struct bd_info *bd)
  	return 0;
  }
  
@@ -816,7 +813,7 @@ index b0a1484c0fa..c9e58493627 100644
  }
  
  static bool is_rpi3(void)
-@@ -681,30 +1035,34 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -681,30 +1066,33 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	struct {
  		const char *fdt_compatible;
  		const char *acpi_scope;
@@ -847,14 +844,13 @@ index b0a1484c0fa..c9e58493627 100644
 +		{"brcm,bcm2711-thermal", "\\_SB.EC00", false, true, true},
 +		{"brcm,bcm2835-sdhci", "\\_SB.SDC1", false, true, true},
 +		{"brcm,bcm2835-sdhost", "\\_SB.SDC2", false, false, true},
-+		{"brcm,bcm2835-mbox", "\\_SB.GDV0.RPIQ", true, true, true},
++		{"brcm,bcm2835-mbox", "\\_SB.GDV0.RPIQ", false, true, true},
 +		{"brcm,bcm2835-i2c", "\\_SB.GDV0.I2C1", false, true, true, 0xfe205000},
 +		{"brcm,bcm2835-i2c", "\\_SB.GDV0.I2C2", false, true, true, 0xfe804000},
 +		{"brcm,bcm2835-spi", "\\_SB.GDV0.SPI0", false, true, true},
 +		{"brcm,bcm2835-aux-spi", "\\_SB.GDV0.SPI1", false, true, true, 0xfe215080},
-+		{"arm,pl011", "\\_SB.URT0", true, true, true},
++		{"arm,pl011", "\\_SB.URT0", false, true, true},
 +		{"brcm,bcm2835-aux-uart", "\\_SB.URTM", false, true, true},
-+		{"brcm,bcm2712-sdhci", "\\_SB.GDV1.SDC3", true, false, false},
  		{ /* Sentinel */ }
  	};
  
@@ -866,59 +862,15 @@ index b0a1484c0fa..c9e58493627 100644
  		    (is_rpi3() && !map[i].on_rpi3)) {
  			enabled = false;
  		} else {
-@@ -743,26 +1101,37 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -743,7 +1131,7 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	acpigen_write_name_integer(ctx, "_STA", enabled ? 0xf : 0);
  	acpigen_pop_len(ctx);
  
 -	if (is_rpi4()) {
--		/* eMMC quirks */
--		node = fdt_node_offset_by_compatible(gd->fdt_blob, -1, "brcm,bcm2711-emmc2");
--		if (node) {
--			phys_addr_t cpu;
--			dma_addr_t bus;
--			u64 size;
--
--			ret = fdt_get_dma_range(gd->fdt_blob, node, &cpu, &bus, &size);
--
 +	if (is_rpi4() || is_rpi5()) {
-+		/* eMMC/SD quirks: generate _DMA method for \._SB.GDV1 */
-+		if (is_rpi5())
-+			/* BCM2712 uses brcm,bcm2712-sdhci; external SD is sdio2 */
-+			node = fdt_node_offset_by_compatible(gd->fdt_blob, -1,
-+							     "brcm,bcm2712-sdhci");
-+		else
-+			node = fdt_node_offset_by_compatible(gd->fdt_blob, -1,
-+							     "brcm,bcm2711-emmc2");
-+		if (node >= 0) {
- 			acpigen_write_scope(ctx, "\\_SB.GDV1");
- 			acpigen_write_method_serialized(ctx, "_DMA", 0);
- 			acpigen_emit_byte(ctx, RETURN_OP);
- 
--			if (!ret && bus != cpu)		/* Translated DMA range */
--				acpigen_emit_namestring(ctx, "\\_SB.GDV1.DMTR");
--			else if (!ret && bus == cpu)	/* Non translated DMA */
-+			if (is_rpi5()) {
-+				/* BCM2712 SDHCI is on the SoC bus with 1:1 DMA mapping */
- 				acpigen_emit_namestring(ctx, "\\_SB.GDV1.DMNT");
--			else	/* Silicon revisions older than C0: Translated DMA range */
--				acpigen_emit_namestring(ctx, "\\_SB.GDV1.DMTR");
-+			} else {
-+				phys_addr_t cpu;
-+				dma_addr_t bus;
-+				u64 size;
-+
-+				ret = fdt_get_dma_range(gd->fdt_blob, node, &cpu, &bus, &size);
-+
-+				if (!ret && bus != cpu)		/* Translated DMA range */
-+					acpigen_emit_namestring(ctx, "\\_SB.GDV1.DMTR");
-+				else if (!ret && bus == cpu)	/* Non translated DMA */
-+					acpigen_emit_namestring(ctx, "\\_SB.GDV1.DMNT");
-+				else	/* Silicon revisions older than C0: Translated DMA */
-+					acpigen_emit_namestring(ctx, "\\_SB.GDV1.DMTR");
-+			}
- 			acpigen_pop_len(ctx);
- 		}
- 	}
+ 		/* eMMC quirks */
+ 		node = fdt_node_offset_by_compatible(gd->fdt_blob, -1, "brcm,bcm2711-emmc2");
+ 		if (node) {
 diff --git a/board/raspberrypi/rpi/rpi.env b/board/raspberrypi/rpi/rpi.env
 index 9ac9d6768ca..4ce9b2e71c7 100644
 --- a/board/raspberrypi/rpi/rpi.env
@@ -1031,7 +983,7 @@ index 69e8e72c5d7..56758a25896 100644
 +CONFIG_CMD_SMBIOS=y
 +CONFIG_LOCALVERSION_AUTO=n
 diff --git a/drivers/clk/Kconfig b/drivers/clk/Kconfig
-index c2da7b3938b..fa4bd11645f 100644
+index c88931c8ec4..4451a657386 100644
 --- a/drivers/clk/Kconfig
 +++ b/drivers/clk/Kconfig
 @@ -67,6 +67,13 @@ config CLK_BOSTON
@@ -1386,10 +1338,10 @@ index fa893485a09..13f3ca15998 100644
  	return addr.phys_hi & 0xff00;
  }
 diff --git a/drivers/gpio/Kconfig b/drivers/gpio/Kconfig
-index 0b5466b39b8..2b655623934 100644
+index 60c5c54688e..67414f110e5 100644
 --- a/drivers/gpio/Kconfig
 +++ b/drivers/gpio/Kconfig
-@@ -142,6 +142,15 @@ config BCM2835_GPIO
+@@ -134,6 +134,15 @@ config BCM2835_GPIO
  	bool "BCM2835 GPIO driver"
  	depends on DM_GPIO && ARCH_BCM283X
  
@@ -1405,7 +1357,7 @@ index 0b5466b39b8..2b655623934 100644
  config BCM6345_GPIO
  	bool "BCM6345 GPIO driver"
  	depends on DM_GPIO && (ARCH_BMIPS || BCM6856 || \
-@@ -413,6 +422,14 @@ config RCAR_GPIO
+@@ -404,6 +413,14 @@ config RCAR_GPIO
  	help
  	  This driver supports the GPIO banks on Renesas R-Car SoCs.
  
@@ -1421,10 +1373,10 @@ index 0b5466b39b8..2b655623934 100644
  	bool "Renesas RZ/A1 GPIO driver"
  	depends on DM_GPIO && RZA1
 diff --git a/drivers/gpio/Makefile b/drivers/gpio/Makefile
-index 863557e45ce..74d224a1596 100644
+index 910478c0c7a..a894fbd8a02 100644
 --- a/drivers/gpio/Makefile
 +++ b/drivers/gpio/Makefile
-@@ -35,6 +35,7 @@ obj-$(CONFIG_NPCM_SGPIO)	+= npcm_sgpio.o
+@@ -34,6 +34,7 @@ obj-$(CONFIG_NPCM_SGPIO)	+= npcm_sgpio.o
  obj-$(CONFIG_PCA953X)		+= pca953x.o
  obj-$(CONFIG_ROCKCHIP_GPIO)	+= rk_gpio.o
  obj-$(CONFIG_RCAR_GPIO)		+= gpio-rcar.o
@@ -1432,7 +1384,7 @@ index 863557e45ce..74d224a1596 100644
  obj-$(CONFIG_RZA1_GPIO)		+= gpio-rza1.o
  obj-$(CONFIG_S5P)		+= s5p_gpio.o
  obj-$(CONFIG_SANDBOX_GPIO)	+= sandbox.o sandbox_test.o
-@@ -49,6 +50,7 @@ obj-$(CONFIG_MPC83XX_SPISEL_BOOT)	+= mpc83xx_spisel_boot.o
+@@ -48,6 +49,7 @@ obj-$(CONFIG_MPC83XX_SPISEL_BOOT)	+= mpc83xx_spisel_boot.o
  obj-$(CONFIG_SH_GPIO_PFC)	+= sh_pfc.o
  obj-$(CONFIG_OMAP_GPIO)	+= omap_gpio.o
  obj-$(CONFIG_BCM2835_GPIO)	+= bcm2835_gpio.o
@@ -2260,10 +2212,10 @@ index 00000000000..e6ebf383a9a
 +U_BOOT_PCI_DEVICE(rp1_driver, dev_id_table);
 \ No newline at end of file
 diff --git a/drivers/net/Kconfig b/drivers/net/Kconfig
-index 666618681df..af5e6559a51 100644
+index fce8004e134..6c39c96aaeb 100644
 --- a/drivers/net/Kconfig
 +++ b/drivers/net/Kconfig
-@@ -570,6 +570,10 @@ config MACB
+@@ -569,6 +569,10 @@ config MACB
  	bool "Cadence MACB/GEM Ethernet Interface"
  	depends on ARM || RISCV
  	select PHYLIB
@@ -2989,7 +2941,7 @@ index b06cb5c6d51..ad1a260f9ab 100644
  		goto free_id;
  	}
 diff --git a/drivers/pci/pci-uclass.c b/drivers/pci/pci-uclass.c
-index f58d542ef75..a789ea5f433 100644
+index 83b76d01f24..30165954813 100644
 --- a/drivers/pci/pci-uclass.c
 +++ b/drivers/pci/pci-uclass.c
 @@ -783,6 +783,83 @@ static int pci_find_and_bind_driver(struct udevice *parent,
@@ -4299,7 +4251,7 @@ index 00000000000..675d133e28e
 +	.flags = DM_FLAG_PRE_RELOC,
 +};
 diff --git a/drivers/reset/Kconfig b/drivers/reset/Kconfig
-index 66911199c8b..b4237bf98bf 100644
+index 2fd91d6299c..b7d2d4b18d5 100644
 --- a/drivers/reset/Kconfig
 +++ b/drivers/reset/Kconfig
 @@ -64,6 +64,20 @@ config RESET_BCM6345
@@ -4324,7 +4276,7 @@ index 66911199c8b..b4237bf98bf 100644
  	bool "Reset controller driver for UniPhier SoCs"
  	depends on ARCH_UNIPHIER
 diff --git a/drivers/reset/Makefile b/drivers/reset/Makefile
-index 088545c6473..c369bdb3d6c 100644
+index ee5b009d134..c7a9da3268d 100644
 --- a/drivers/reset/Makefile
 +++ b/drivers/reset/Makefile
 @@ -13,6 +13,8 @@ obj-$(CONFIG_RESET_AIROHA) += reset-airoha.o
