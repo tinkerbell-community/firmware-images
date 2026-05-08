@@ -369,7 +369,7 @@ index 1dc7ce50d1d..3532a980b75 100644
  
  void __efi_runtime EFIAPI efi_reset_system(
 diff --git a/board/raspberrypi/rpi/rpi.c b/board/raspberrypi/rpi/rpi.c
-index b0a1484c0fa..5a04bb7ae93 100644
+index b0a1484c0fa..196cc08c331 100644
 --- a/board/raspberrypi/rpi/rpi.c
 +++ b/board/raspberrypi/rpi/rpi.c
 @@ -9,27 +9,35 @@
@@ -419,7 +419,34 @@ index b0a1484c0fa..5a04bb7ae93 100644
  	printf("RPI %s (0x%x)\n", model->name, revision);
  }
  
-@@ -661,11 +673,330 @@ int ft_board_setup(void *blob, struct bd_info *bd)
+@@ -644,6 +656,26 @@ int ft_board_setup(void *blob, struct bd_info *bd)
+ 	else
+ 		update_fdt_from_fw(blob, (void *)gd->fdt_blob);
+ 
++#ifdef CONFIG_BCM2712
++	/*
++	 * BCM2712 (RPi 5) — enable MIP MSI controllers in the kernel DTB.
++	 *
++	 * The VPU firmware ships the msi-controller@10001300{0,1}000 nodes
++	 * (compatible "brcm,bcm2712-mip") as status="disabled".  Linux's
++	 * brcm-pcie driver requires them enabled to register the MSI domain
++	 * on pcie2; otherwise rp1_pci probe fails with -ENOTSUPP (-524)
++	 * because pci_alloc_irq_vectors() cannot allocate MSI-X vectors.
++	 */
++	node = -1;
++	while ((node = fdt_node_offset_by_compatible(blob, node,
++						     "brcm,bcm2712-mip")) >= 0) {
++		const char *status = fdt_getprop(blob, node, "status", NULL);
++
++		if (status && !strcmp(status, "disabled"))
++			fdt_setprop_string(blob, node, "status", "okay");
++	}
++#endif
++
+ 	if (CONFIG_IS_ENABLED(FDT_SIMPLEFB)) {
+ 		node = fdt_node_offset_by_compatible(blob, -1, "simple-framebuffer");
+ 		if (node < 0)
+@@ -661,11 +693,330 @@ int ft_board_setup(void *blob, struct bd_info *bd)
  	return 0;
  }
  
@@ -752,7 +779,7 @@ index b0a1484c0fa..5a04bb7ae93 100644
  }
  
  static bool is_rpi3(void)
-@@ -681,30 +1012,33 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -681,30 +1032,33 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	struct {
  		const char *fdt_compatible;
  		const char *acpi_scope;
@@ -801,7 +828,7 @@ index b0a1484c0fa..5a04bb7ae93 100644
  		    (is_rpi3() && !map[i].on_rpi3)) {
  			enabled = false;
  		} else {
-@@ -743,7 +1077,7 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -743,7 +1097,7 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	acpigen_write_name_integer(ctx, "_STA", enabled ? 0xf : 0);
  	acpigen_pop_len(ctx);
  
