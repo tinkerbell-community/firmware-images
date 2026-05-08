@@ -16,8 +16,6 @@ on:
         required: false
         type: string
   push:
-    tags:
-      - 'u-boot-v*'
     paths:
       - 'u-boot/**'
 
