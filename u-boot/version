@@ -1,3 +1,3 @@
-uboot v2026.04
+uboot v2026.07-rc1
 firmware master
-kernel rpi-6.18.y
+talos_kernel v1.13.0-10-g4be1aaa

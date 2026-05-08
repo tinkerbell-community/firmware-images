@@ -12,7 +12,7 @@ on:
         required: false
         type: string
       kernel:
-        description: "Raspberry Pi kernel version tag for building device tree files"
+        description: "Talos kernel OCI image version tag (e.g. v1.10.0)"
         required: false
         type: string
   push:
@@ -26,7 +26,7 @@ jobs:
       release: ${{ steps.version.outputs.release }}
       uboot: ${{ steps.version.outputs.uboot }}
       firmware: ${{ steps.version.outputs.firmware }}
-      kernel: ${{ steps.version.outputs.kernel }}
+      talos_kernel: ${{ steps.version.outputs.talos_kernel }}
 
     steps:
       - name: Checkout repository
@@ -42,7 +42,7 @@ jobs:
           # Parse values from version file
           FILE_UBOOT_VER=$(grep '^uboot ' "$VERSION_FILE" | awk '{print $2}')
           FILE_FIRMWARE_VER=$(grep '^firmware ' "$VERSION_FILE" | awk '{print $2}')
-          FILE_KERNEL_VER=$(grep '^kernel ' "$VERSION_FILE" | awk '{print $2}')
+          FILE_TALOS_KERNEL_VER=$(grep '^talos_kernel ' "$VERSION_FILE" | awk '{print $2}')
 
           # Use workflow_dispatch inputs if provided, otherwise use file values
           uboot="${{ inputs.uboot }}"
@@ -51,14 +51,14 @@ jobs:
           firmware="${{ inputs.firmware }}"
           firmware="${firmware:-$FILE_FIRMWARE_VER}"
 
-          kernel="${{ inputs.kernel }}"
-          kernel="${kernel:-$FILE_KERNEL_VER}"
+          talos_kernel="${{ inputs.kernel }}"
+          talos_kernel="${talos_kernel:-$FILE_TALOS_KERNEL_VER}"
 
           release="u-boot-${uboot}"
 
           echo "uboot=$uboot" >> $GITHUB_OUTPUT
           echo "firmware=$firmware" >> $GITHUB_OUTPUT
-          echo "kernel=$kernel" >> $GITHUB_OUTPUT
+          echo "talos_kernel=$talos_kernel" >> $GITHUB_OUTPUT
           echo "release=$release" >> $GITHUB_OUTPUT
           echo "Release version: $release"
 
@@ -158,11 +158,12 @@ jobs:
           overwrite: true
           if-no-files-found: error
 
-  build-kernel-dtbs:
+  extract-kernel-dtbs:
     needs: determine-version
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
+      packages: read
 
     steps:
       - name: Checkout repository
@@ -171,71 +172,45 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           path: src
 
-      - name: Cache and install build dependencies
+      - name: Setup crane
+        uses: imjasonh/setup-crane@v0.5
+
+      - name: Install build dependencies
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: build-essential cpp device-tree-compiler
+          packages: device-tree-compiler
           version: 1.0
 
-      - name: Checkout rpi kernel
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          repository: raspberrypi/linux
-          fetch-depth: 1
-          path: firmware
-          ref: ${{ needs.determine-version.outputs.kernel }}
-
-      - name: Download and patch Raspberry Pi kernel source
-        working-directory: firmware
+      - name: Extract DTBs from Talos kernel OCI image
         run: |
-          for patch in $(find ${{ github.workspace }}/src/u-boot/patches/dtb -type f -name '*.patch' | sort); do
-            echo "Applying patch $patch"
-            patch -p1 < "$patch" || (echo "Failed to apply patch $patch" && exit 1)
-          done
+          mkdir -p out/overlays
 
-          # Copy custom overlay DTS files into the kernel source tree
-          mkdir -p arch/arm/boot/dts/overlays/
-          cp -av ${{ github.workspace }}/src/u-boot/patches/dtb/overlays/* arch/arm/boot/dts/overlays/
+          echo "Extracting DTBs from ghcr.io/siderolabs/kernel:${{ needs.determine-version.outputs.talos_kernel }}..."
+          crane export --platform linux/arm64 \
+            ghcr.io/siderolabs/kernel:${{ needs.determine-version.outputs.talos_kernel }} \
+            /tmp/talos-kernel.tar
 
-      - name: Build device tree binaries
-        working-directory: firmware
-        run: |
-          mkdir -p out out/overlays
+          tar -xf /tmp/talos-kernel.tar --strip-components=2 -C out/ \
+            $(tar -tf /tmp/talos-kernel.tar | grep -E '^dtb/broadcom/bcm27[^/]+\.dtb$')
+          rm /tmp/talos-kernel.tar
 
-          export DTC_FLAGS="-R 4 -p 0x1000 -@ -H epapr"
-          for dts in arch/arm64/boot/dts/broadcom/bcm27*.dts; do
-            target=$(basename "${dts%*.dts}")
-            echo "Building $target.dtb"
-            cpp -nostdinc -I include -I arch -undef -x assembler-with-cpp \
-              -I scripts/dtc/include-prefixes/ -D__DTS__ -DFIRMWARE_UPDATED \
-              -P "$dts" -o "out/$target.dts"
-            dtc -O dtb $DTC_FLAGS -o "out/$target.dtb" "out/$target.dts"
-          done
-
-          echo "Built device tree files:"
+          echo "Extracted device tree files:"
           ls -lah out/*.dtb
 
-          if [ -z "$(ls out/bcm2712*.dtb 2>/dev/null)" ]; then
-            echo "ERROR: No bcm2712* device tree files built"
+          if [ -z "$(ls out/bcm2711*.dtb 2>/dev/null)" ]; then
+            echo "ERROR: No bcm2711* device tree files extracted"
             exit 1
           fi
 
+      - name: Build custom overlay device trees
+        run: |
           export DTC_FLAGS="-R 0 -p 0 -@ -H epapr"
-          for dts in arch/arm/boot/dts/overlays/*.dts; do
+          for dts in src/u-boot/patches/dtb/overlays/*.dts; do
             # disable-v3d-overlay.dts -> disable-v3d
-            target=$(basename "${dts%*.dts}")
-            target="${target%-overlay}"
+            target=$(basename "${dts%*-overlay.dts}")
             echo "Building $target.dtbo"
-            cpp -nostdinc -I include -I arch -undef -x assembler-with-cpp \
-              -I scripts/dtc/include-prefixes/ -D__DTS__ -DFIRMWARE_UPDATED \
-              -P "$dts" -o "out/overlays/$target.dts"
-            dtc -O dtb $DTC_FLAGS -o "out/overlays/$target.dtbo" "out/overlays/$target.dts"
+            dtc -O dtb $DTC_FLAGS -o "out/overlays/$target.dtbo" "$dts"
           done
-
-          # Match the names firmware wants
-          [ -f out/overlays/hat_map.dtbo ] && mv out/overlays/hat_map.dtbo out/overlays/hat_map.dtb
-          [ -f out/overlays/overlay_map.dtbo ] && mv out/overlays/overlay_map.dtbo out/overlays/overlay_map.dtb
 
           echo "Built overlay files:"
           ls -lah out/overlays/
@@ -245,13 +220,13 @@ jobs:
         with:
           name: kernel-dts
           path: |
-            firmware/out/*.dtb
-            firmware/out/overlays/
+            out/*.dtb
+            out/overlays/
           retention-days: 1
           if-no-files-found: error
 
   build-image:
-    needs: [determine-version, build-uboot, checkout-firmware,prepare-config, build-kernel-dtbs]
+    needs: [determine-version, build-uboot, checkout-firmware, prepare-config, extract-kernel-dtbs]
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: write
@@ -261,8 +236,6 @@ jobs:
     outputs:
       image_name: ${{ steps.create_image.outputs.image_name }}
       image_size: ${{ steps.create_image.outputs.image_size }}
-      iso_name: ${{ steps.create_iso.outputs.iso_name }}
-      iso_size: ${{ steps.create_iso.outputs.iso_size }}
       release: ${{ needs.determine-version.outputs.release }}
 
     steps:
@@ -293,9 +266,8 @@ jobs:
           # Copy firmware files
           cp -r artifacts/rpi-firmware/* build/
 
-          # Copy patched Raspberry Pi kernel device tree files (bcm2712*)
-          # Built from raspberrypi/linux with upstream-compatibility patches applied
-          echo "Copying patched kernel device tree files..."
+          # Copy Raspberry Pi device tree files from Talos kernel OCI image
+          echo "Copying kernel device tree files..."
           mkdir -p build/broadcom
           cp -r artifacts/kernel-dts/*.dtb build/broadcom/
           cp -r artifacts/kernel-dts/*.dtb build/
@@ -324,14 +296,13 @@ jobs:
           IMAGE_NAME="uboot-rpi.img"
           dd if=/dev/zero of="$IMAGE_NAME" bs=1M count=$IMAGE_SIZE status=progress
 
-          # Create partition table with proper type for Pi 5
-          # Use sfdisk to set partition type to 0x0c (W95 FAT32 LBA)
+          # Create GPT partition table with EFI System Partition for UEFI boot
           cat > partition.sfdisk << 'SFDISK_EOF'
-          label: dos
+          label: gpt
           unit: sectors
           sector-size: 512
 
-          start=2048, type=c, bootable
+          start=2048, type=uefi, name="EFI"
           SFDISK_EOF
 
           sfdisk "$IMAGE_NAME" < partition.sfdisk
@@ -340,8 +311,11 @@ jobs:
           LOOP_DEVICE=$(sudo losetup --find --show --partscan "$IMAGE_NAME")
           echo "Loop device: $LOOP_DEVICE"
 
+          # Wait for udev to create GPT partition device nodes (avoids race condition)
+          sudo udevadm settle
+
           # Format partition as FAT32 with explicit parameters
-          sudo mkfs.vfat -F 32 -n BOOT "${LOOP_DEVICE}p1"
+          sudo mkfs.vfat -F 32 -n "EFI" "${LOOP_DEVICE}p1"
 
           # Mount and copy files
           sudo mount "${LOOP_DEVICE}p1" ../mnt
@@ -361,29 +335,6 @@ jobs:
           echo "image_size=$IMAGE_SIZE_BYTES" >> $GITHUB_OUTPUT
 
           ls -lh "$IMAGE_NAME"*
-
-      - name: Create ISO image
-        id: create_iso
-        working-directory: out
-        env:
-          release: ${{ needs.determine-version.outputs.release }}
-        run: |
-          ISO_NAME="uboot-rpi.iso"
-
-          genisoimage \
-            -o "$ISO_NAME" \
-            -V "UBOOT_RPI" \
-            -R -J \
-            -joliet-long \
-            ../build
-
-          sha256sum "$ISO_NAME" > "${ISO_NAME}.sha256"
-
-          ISO_SIZE_BYTES=$(stat -c%s "$ISO_NAME")
-          echo "iso_name=$ISO_NAME" >> $GITHUB_OUTPUT
-          echo "iso_size=$ISO_SIZE_BYTES" >> $GITHUB_OUTPUT
-
-          ls -lh "$ISO_NAME"*
 
       - name: Compress SD card image
         working-directory: out
@@ -407,7 +358,7 @@ jobs:
           - **U-Boot Version**: \`${{ needs.determine-version.outputs.uboot }}\`
           - **Release Version**: \`${release}\`
           - **Raspberry Pi Firmware**: \`${{ needs.determine-version.outputs.firmware }}\`
-          - **Raspberry Pi Kernel DTBs**: \`${{ needs.determine-version.outputs.kernel }}\`
+          - **Talos Kernel**: \`${{ needs.determine-version.outputs.talos_kernel }}\`
           - **Architecture**: ARM64 (aarch64)
           - **Target Device**: Raspberry Pi 4 / Raspberry Pi 400
 
@@ -499,8 +450,6 @@ jobs:
           path: |
             out/${{ steps.create_image.outputs.image_name }}.xz
             out/${{ steps.create_image.outputs.image_name }}.xz.sha256
-            out/${{ steps.create_iso.outputs.iso_name }}
-            out/${{ steps.create_iso.outputs.iso_name }}.sha256
             out/release_notes.md
           retention-days: 30
 
@@ -511,8 +460,6 @@ jobs:
           echo "✅ U-Boot SD card image created successfully"
           echo "📦 SD Image: ${{ steps.create_image.outputs.image_name }}.xz"
           echo "📏 SD Uncompressed size: ${{ steps.create_image.outputs.image_size }} bytes"
-          echo "📦 ISO Image: ${{ steps.create_iso.outputs.iso_name }}"
-          echo "📏 ISO Uncompressed size: ${{ steps.create_iso.outputs.iso_size }} bytes"
           echo "🔖 U-Boot version: ${{ needs.determine-version.outputs.uboot }}"
           echo "🔖 Release version: ${release}"
           echo "🔖 Firmware version: ${{ needs.determine-version.outputs.firmware }}"
@@ -540,8 +487,6 @@ jobs:
           files: |
             artifacts/${{ needs.build-image.outputs.image_name }}.xz
             artifacts/${{ needs.build-image.outputs.image_name }}.xz.sha256
-            artifacts/${{ needs.build-image.outputs.iso_name }}
-            artifacts/${{ needs.build-image.outputs.iso_name }}.sha256
           draft: false
           prerelease: false
         env:
