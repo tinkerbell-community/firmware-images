@@ -369,7 +369,7 @@ index 1dc7ce50d1d..3532a980b75 100644
  
  void __efi_runtime EFIAPI efi_reset_system(
 diff --git a/board/raspberrypi/rpi/rpi.c b/board/raspberrypi/rpi/rpi.c
-index b0a1484c0fa..bd8897a1cfa 100644
+index b0a1484c0fa..5a04bb7ae93 100644
 --- a/board/raspberrypi/rpi/rpi.c
 +++ b/board/raspberrypi/rpi/rpi.c
 @@ -9,27 +9,35 @@
@@ -419,68 +419,7 @@ index b0a1484c0fa..bd8897a1cfa 100644
  	printf("RPI %s (0x%x)\n", model->name, revision);
  }
  
-@@ -644,6 +656,60 @@ int ft_board_setup(void *blob, struct bd_info *bd)
- 	else
- 		update_fdt_from_fw(blob, (void *)gd->fdt_blob);
- 
-+#ifdef CONFIG_BCM2712
-+	/*
-+	 * BCM2712 (RPi 5) — enable MIP MSI controllers in the kernel DTB.
-+	 *
-+	 * The MIP nodes (msi-controller@10001300{0,1}000) are shipped as
-+	 * status="disabled" in both the VPU firmware DTB (downstream
-+	 * compatible "brcm,bcm2712-mip-intc") and some upstream layouts
-+	 * (compatible "brcm,bcm2712-mip").  Linux's brcm-pcie driver needs
-+	 * them enabled to register the MSI domain on pcie2; otherwise
-+	 * rp1_pci probe fails with -ENOTSUPP (-524) because
-+	 * pci_alloc_irq_vectors() cannot allocate MSI-X vectors.
-+	 */
-+	{
-+		static const char * const mip_compats[] = {
-+			"brcm,bcm2712-mip",
-+			"brcm,bcm2712-mip-intc",
-+		};
-+		int patched = 0;
-+		int i;
-+
-+		for (i = 0; i < ARRAY_SIZE(mip_compats); i++) {
-+			node = -1;
-+			while ((node = fdt_node_offset_by_compatible(blob, node,
-+					mip_compats[i])) >= 0) {
-+				const char *status;
-+				const char *name;
-+				int ret;
-+
-+				status = fdt_getprop(blob, node, "status", NULL);
-+				name = fdt_get_name(blob, node, NULL);
-+
-+				if (!status || !strcmp(status, "okay")) {
-+					log_debug("rpi: MIP %s already okay\n",
-+						  name ?: "?");
-+					continue;
-+				}
-+
-+				ret = fdt_setprop_string(blob, node, "status",
-+							 "okay");
-+				if (ret) {
-+					log_warning("rpi: failed to enable MIP %s: %d\n",
-+						    name ?: "?", ret);
-+					continue;
-+				}
-+				log_info("rpi: enabled MIP %s (compat %s)\n",
-+					 name ?: "?", mip_compats[i]);
-+				patched++;
-+			}
-+		}
-+		if (!patched)
-+			log_info("rpi: no disabled MIP MSI nodes found in DTB\n");
-+	}
-+#endif
-+
- 	if (CONFIG_IS_ENABLED(FDT_SIMPLEFB)) {
- 		node = fdt_node_offset_by_compatible(blob, -1, "simple-framebuffer");
- 		if (node < 0)
-@@ -661,11 +727,330 @@ int ft_board_setup(void *blob, struct bd_info *bd)
+@@ -661,11 +673,330 @@ int ft_board_setup(void *blob, struct bd_info *bd)
  	return 0;
  }
  
@@ -813,7 +752,7 @@ index b0a1484c0fa..bd8897a1cfa 100644
  }
  
  static bool is_rpi3(void)
-@@ -681,30 +1066,33 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -681,30 +1012,33 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	struct {
  		const char *fdt_compatible;
  		const char *acpi_scope;
@@ -862,7 +801,7 @@ index b0a1484c0fa..bd8897a1cfa 100644
  		    (is_rpi3() && !map[i].on_rpi3)) {
  			enabled = false;
  		} else {
-@@ -743,7 +1131,7 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -743,7 +1077,7 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	acpigen_write_name_integer(ctx, "_STA", enabled ? 0xf : 0);
  	acpigen_pop_len(ctx);
  
@@ -4525,6 +4464,53 @@ index 0c81e606622..0e0cc1979eb 100644
  	{ .compatible = "brcm,bcm2708-fb" },
  #if !IS_ENABLED(CONFIG_VIDEO_DT_SIMPLEFB)
  	{ .compatible = "simple-framebuffer" },
+diff --git a/dts/upstream/src/arm64/broadcom/bcm2712.dtsi b/dts/upstream/src/arm64/broadcom/bcm2712.dtsi
+index 205b87f557d..d5e136f5482 100644
+--- a/dts/upstream/src/arm64/broadcom/bcm2712.dtsi
++++ b/dts/upstream/src/arm64/broadcom/bcm2712.dtsi
+@@ -604,8 +604,8 @@
+ 				<0x43000000 0x04 0x00000000 0x1c 0x00000000 0x03 0x00000000>;
+ 
+ 			dma-ranges =
+-				/* 4MiB, 32-bit, non-prefetchable at PCIe 00_0000_0000 */
+-				<0x02000000 0x00 0x00000000 0x1f 0x00000000 0x00 0x00400000>,
++				/* ~4MiB, 32-bit, non-prefetchable at PCIe 00_0000_0000 */
++				<0x02000000 0x00 0x00000000 0x1f 0x00000000 0x00 0x00410000>,
+ 				/* 64GiB, 64-bit, prefetchable at PCIe 10_0000_0000 */
+ 				<0x43000000 0x10 0x00000000 0x00 0x00000000 0x10 0x00000000>,
+ 				/* 4KiB, 64-bit, non-prefetchable at PCIe ff_ffff_f000 MIP0 */
+diff --git a/dts/upstream/src/arm64/broadcom/rp1-common.dtsi b/dts/upstream/src/arm64/broadcom/rp1-common.dtsi
+index 5a815c37979..ccf9bb30011 100644
+--- a/dts/upstream/src/arm64/broadcom/rp1-common.dtsi
++++ b/dts/upstream/src/arm64/broadcom/rp1-common.dtsi
+@@ -6,7 +6,7 @@
+ 
+ pci_ep_bus: pci-ep-bus@1 {
+ 	compatible = "simple-bus";
+-	ranges = <0x00 0x40000000  0x01 0x00 0x00000000  0x00 0x00400000>;
++	ranges = <0x00 0x40000000  0x01 0x00 0x00000000  0x00 0x00410000>;
+ 	dma-ranges = <0x10 0x00000000  0x43000000 0x10 0x00000000  0x10 0x00000000>;
+ 	#address-cells = <2>;
+ 	#size-cells = <2>;
+diff --git a/dts/upstream/src/arm64/broadcom/rp1-nexus.dtsi b/dts/upstream/src/arm64/broadcom/rp1-nexus.dtsi
+index 0ef30d7f1c3..53174b72763 100644
+--- a/dts/upstream/src/arm64/broadcom/rp1-nexus.dtsi
++++ b/dts/upstream/src/arm64/broadcom/rp1-nexus.dtsi
+@@ -1,12 +1,12 @@
+ // SPDX-License-Identifier: (GPL-2.0 OR MIT)
+ 
+-rp1_nexus {
++rp1_nexus: rp1_nexus {
+ 	compatible = "pci1de4,1";
+ 	#address-cells = <3>;
+ 	#size-cells = <2>;
+ 	ranges = <0x01 0x00 0x00000000
+ 		  0x02000000 0x00 0x00000000
+-		  0x0 0x400000>;
++		  0x0 0x410000>;
+ 	interrupt-controller;
+ 	#interrupt-cells = <2>;
+ 
 diff --git a/include/broadcom/bcm_board_types.h b/include/broadcom/bcm_board_types.h
 new file mode 100644
 index 00000000000..3508b40fa9c
