@@ -151,10 +151,10 @@ index ec0f93dd850..30260fa5269 100644
 +	};
 +};
 diff --git a/arch/arm/mach-bcm283x/Kconfig b/arch/arm/mach-bcm283x/Kconfig
-index d9303e8c281..7ff80636fac 100644
+index d9303e8c281..9d90fc336a5 100644
 --- a/arch/arm/mach-bcm283x/Kconfig
 +++ b/arch/arm/mach-bcm283x/Kconfig
-@@ -56,6 +56,27 @@ config BCM2711_64B
+@@ -56,6 +56,28 @@ config BCM2711_64B
  	select BLOBLIST_ALLOC if GENERATE_ACPI_TABLE
  	select BLOBLIST_TABLES if GENERATE_ACPI_TABLE
  
@@ -178,6 +178,7 @@ index d9303e8c281..7ff80636fac 100644
 +	imply CMD_POWEROFF
 +	imply BUTTON
 +	imply BUTTON_GPIO
++	imply CYCLIC
 +
  menu "Broadcom BCM283X family"
  	depends on ARCH_BCM283X
@@ -385,10 +386,10 @@ index 1dc7ce50d1d..3532a980b75 100644
  
  void __efi_runtime EFIAPI efi_reset_system(
 diff --git a/board/raspberrypi/rpi/rpi.c b/board/raspberrypi/rpi/rpi.c
-index b0a1484c0fa..c7130364f64 100644
+index b0a1484c0fa..5a04bb7ae93 100644
 --- a/board/raspberrypi/rpi/rpi.c
 +++ b/board/raspberrypi/rpi/rpi.c
-@@ -9,28 +9,34 @@
+@@ -9,27 +9,35 @@
  #include <dm.h>
  #include <env.h>
  #include <efi_loader.h>
@@ -418,12 +419,13 @@ index b0a1484c0fa..c7130364f64 100644
  #include <acpi/acpigen.h>
  #include <dm/lists.h>
  #include <tables_csum.h>
++#if defined(CONFIG_BCM2712) && defined(CONFIG_CYCLIC)
++#include <cyclic.h>
++#endif
  
-+
  DECLARE_GLOBAL_DATA_PTR;
  
- /* Assigned in lowlevel_init.S
-@@ -546,6 +552,10 @@ static void get_board_revision(void)
+@@ -546,6 +554,10 @@ static void get_board_revision(void)
  		model = &models[rev_type];
  	}
  
@@ -434,7 +436,7 @@ index b0a1484c0fa..c7130364f64 100644
  	printf("RPI %s (0x%x)\n", model->name, revision);
  }
  
-@@ -661,11 +671,63 @@ int ft_board_setup(void *blob, struct bd_info *bd)
+@@ -661,11 +673,330 @@ int ft_board_setup(void *blob, struct bd_info *bd)
  	return 0;
  }
  
@@ -447,6 +449,271 @@ index b0a1484c0fa..c7130364f64 100644
 + * This initialization should be done only for RPI5 board.
 + */
 +#ifdef CONFIG_BCM2712
++
++/*
++ * Power button monitoring via GIO edge detection.
++ *
++ * The RPi 5 power button (J2 header / on-board switch) goes through the
++ * PMIC, which signals the VPU firmware, which drives GIO GPIO20 low.
++ * The pulse can be very short (~100-200ms from KVM devices), so simple
++ * level-polling at 100ms intervals misses it.
++ *
++ * Instead we configure the GIO hardware for falling-edge detection.
++ * The STAT register latches the edge and stays set until explicitly
++ * cleared (write-1-to-clear), so even a microsecond pulse is captured.
++ * We poll STAT (plus a level fallback) to reliably detect presses.
++ */
++#if defined(CONFIG_CYCLIC) && defined(CONFIG_DM_GPIO)
++
++#include <asm/arch/wdog.h>
++
++/* GIO per-bank register offsets (each bank is 0x20 bytes) */
++#define GIO_BANK_SIZE	0x20
++#define GIO_REG_EC	0x0c	/* edge config: 0 = falling, 1 = rising (per Linux gpio-brcmstb.c) */
++#define GIO_REG_EI	0x10	/* edge-insensitive: set to detect both edges, clear to follow EC */
++#define GIO_REG_MASK	0x14	/* interrupt mask: must be set for STAT to latch edge events */
++#define GIO_REG_STAT	0x1c	/* interrupt status (sticky, write-1-to-clear) */
++
++#define RPI_PWR_BTN_POLL_US	50000	/* 50ms polling interval */
++
++struct rpi_power_btn_ctx {
++	struct cyclic_info cyclic;
++	struct gpio_desc gpio;		/* DM GPIO handle (level reads + diagnostics) */
++	void __iomem *bank_base;	/* direct GIO bank register base (edge detect) */
++	u32 bit_mask;			/* bit within the bank for the power GPIO */
++	bool power_off_on_halt;		/* POWER_OFF_ON_HALT from EEPROM bootloader config */
++};
++
++static struct rpi_power_btn_ctx rpi_pwr_btn;
++
++/*
++ * Read POWER_OFF_ON_HALT from the EEPROM bootloader config exposed by the VPU
++ * firmware via the blconfig nvmem-rmem region in the firmware device tree.
++ *
++ * The firmware copies the EEPROM text config into reserved memory and updates
++ * the blconfig node's reg property with the physical address and size before
++ * handing off to U-Boot.  The config is a plain-text key=value file, e.g.:
++ *   POWER_OFF_ON_HALT=1
++ *
++ * Returns true only when POWER_OFF_ON_HALT=1 is found in that config.
++ */
++static bool rpi_eeprom_power_off_on_halt(void)
++{
++	void *fw_fdt = (void *)fw_dtb_pointer;
++	struct fdt_resource res;
++	int node, ret;
++	const char *cfg, *p, *end;
++
++	if (!fw_fdt || fdt_magic(fw_fdt) != FDT_MAGIC)
++		return false;
++
++	/*
++	 * "blconfig" is an alias in the firmware DT that resolves to the
++	 * nvmem-rmem node whose reg property the firmware has filled in with
++	 * the physical address of the EEPROM config copy in reserved memory.
++	 *
++	 * fdt_get_resource() reads the parent's #address-cells/#size-cells
++	 * automatically, so the 4-cell encoding used by BCM2711/BCM2712
++	 * (<addr_hi addr_lo size_hi size_lo>) is handled correctly.
++	 */
++	node = fdt_path_offset(fw_fdt, "blconfig");
++	if (node < 0)
++		return false;
++
++	ret = fdt_get_resource(fw_fdt, node, "reg", 0, &res);
++	if (ret || !res.start || res.start == res.end)
++		return false;
++
++	cfg = (const char *)(uintptr_t)res.start;
++	end = (const char *)(uintptr_t)(res.end + 1);
++
++	for (p = cfg; p < end && *p; ) {
++		if ((end - p) > 18 && !strncmp(p, "POWER_OFF_ON_HALT=", 18))
++			return p[18] == '1';
++		/* advance to the next line */
++		while (p < end && *p && *p != '\n')
++			p++;
++		if (p < end && *p == '\n')
++			p++;
++	}
++
++	return false;
++}
++
++/*
++ * Signal the VPU firmware to halt (partition 63 in RSTS) before triggering
++ * the watchdog reset.  The firmware reads RSTS on startup: partition 63 means
++ * "halt".  With POWER_OFF_ON_HALT=1 in the EEPROM bootloader config the PMIC
++ * is commanded to cut power; without it the firmware waits for a
++ * power-button press before restarting.
++ */
++#define RPI_WDOG_RSTS_HALT	0x555	/* partition 63 – halt signal to VPU */
++
++static void rpi_signal_poweroff(void)
++{
++	struct bcm2835_wdog_regs *regs =
++		(struct bcm2835_wdog_regs *)BCM2835_WDOG_PHYSADDR;
++	u32 val;
++
++	val = readl(&regs->rsts);
++	val |= BCM2835_WDOG_PASSWORD;
++	val |= RPI_WDOG_RSTS_HALT;
++	writel(val, &regs->rsts);
++
++	reset_cpu();
++}
++
++static void rpi_power_btn_poll(struct cyclic_info *c)
++{
++	struct rpi_power_btn_ctx *ctx =
++		container_of(c, struct rpi_power_btn_ctx, cyclic);
++
++	/* Primary: check hardware edge-triggered status (catches short pulses) */
++	if (ctx->bank_base) {
++		u32 stat = readl(ctx->bank_base + GIO_REG_STAT);
++
++		if (stat & ctx->bit_mask) {
++			writel(ctx->bit_mask, ctx->bank_base + GIO_REG_STAT);
++			if (ctx->power_off_on_halt) {
++				printf("\nRPI: Power button pressed, powering off...\n");
++				rpi_signal_poweroff();
++			} else {
++				printf("\nRPI: Power button pressed, resetting...\n");
++				reset_cpu();
++			}
++			return;
++		}
++	}
++
++	/* Fallback: level-based detection for sustained holds */
++	if (dm_gpio_get_value(&ctx->gpio) > 0) {
++		if (ctx->power_off_on_halt) {
++			printf("\nRPI: Power button held, powering off...\n");
++			rpi_signal_poweroff();
++		} else {
++			printf("\nRPI: Power button held, resetting...\n");
++			reset_cpu();
++		}
++	}
++}
++
++static void rpi_register_power_button(void)
++{
++	ofnode keys_node, btn_node;
++	struct udevice *gpio_dev;
++	void __iomem *gio_base;
++	u32 bank_widths[4];
++	int num_banks, i, bank;
++	u32 gpio_offset, offset;
++	u32 val;
++	int ret;
++
++	keys_node = ofnode_by_compatible(ofnode_null(), "gpio-keys");
++	if (!ofnode_valid(keys_node))
++		return;
++
++	ofnode_for_each_subnode(btn_node, keys_node) {
++		const char *label = ofnode_read_string(btn_node, "label");
++
++		if (label && !strcmp(label, "pwr_button"))
++			break;
++	}
++
++	if (!ofnode_valid(btn_node)) {
++		log_debug("RPI: power button node not found\n");
++		return;
++	}
++
++	/* Request GPIO through DM — ensures it is claimed and set as input */
++	ret = gpio_request_by_name_nodev(btn_node, "gpios", 0,
++					 &rpi_pwr_btn.gpio, GPIOD_IS_IN);
++	if (ret) {
++		log_debug("RPI: failed to request power button GPIO: %d\n", ret);
++		return;
++	}
++
++	/*
++	 * Set up edge detection directly on the GIO hardware registers.
++	 * The DM GPIO layer doesn't expose interrupt/edge functionality,
++	 * so we access the controller registers via the parent device.
++	 */
++	gpio_dev = rpi_pwr_btn.gpio.dev;
++	gpio_offset = rpi_pwr_btn.gpio.offset;
++
++	gio_base = dev_remap_addr(gpio_dev);
++	if (!gio_base) {
++		printf("RPI: cannot map GIO registers, edge detect unavailable\n");
++		goto register_cyclic;
++	}
++
++	/* Determine which bank and bit position this GPIO falls in */
++	num_banks = dev_read_size(gpio_dev, "brcm,gpio-bank-widths");
++	if (num_banks < 0) {
++		printf("RPI: missing bank-widths, edge detect unavailable\n");
++		goto register_cyclic;
++	}
++	num_banks /= sizeof(u32);
++	if (num_banks > ARRAY_SIZE(bank_widths)) {
++		printf("RPI: too many banks, edge detect unavailable\n");
++		goto register_cyclic;
++	}
++	dev_read_u32_array(gpio_dev, "brcm,gpio-bank-widths",
++			   bank_widths, num_banks);
++
++	offset = gpio_offset;
++	bank = -1;
++	for (i = 0; i < num_banks; i++) {
++		if (offset < bank_widths[i]) {
++			bank = i;
++			break;
++		}
++		offset -= bank_widths[i];
++	}
++	if (bank < 0) {
++		printf("RPI: GPIO%u out of range, edge detect unavailable\n",
++		       gpio_offset);
++		goto register_cyclic;
++	}
++
++	rpi_pwr_btn.bank_base = gio_base + bank * GIO_BANK_SIZE;
++	rpi_pwr_btn.bit_mask = BIT(offset);
++
++	/*
++	 * Configure falling-edge detection for active-low power button.
++	 * Per Linux gpio-brcmstb.c: EC=0 → falling edge, EC=1 → rising edge.
++	 * EI (edge-insensitive) must be clear so the EC direction is respected;
++	 * setting EI would detect both edges regardless of EC.
++	 */
++	val = readl(rpi_pwr_btn.bank_base + GIO_REG_EC);
++	val &= ~rpi_pwr_btn.bit_mask;		/* clear = falling edge */
++	writel(val, rpi_pwr_btn.bank_base + GIO_REG_EC);
++
++	val = readl(rpi_pwr_btn.bank_base + GIO_REG_EI);
++	val &= ~rpi_pwr_btn.bit_mask;		/* clear = use EC direction, not both-edges */
++	writel(val, rpi_pwr_btn.bank_base + GIO_REG_EI);
++
++	/* Enable MASK so hardware latches the edge into STAT */
++	val = readl(rpi_pwr_btn.bank_base + GIO_REG_MASK);
++	val |= rpi_pwr_btn.bit_mask;
++	writel(val, rpi_pwr_btn.bank_base + GIO_REG_MASK);
++
++	/* Clear any stale edge status */
++	writel(rpi_pwr_btn.bit_mask, rpi_pwr_btn.bank_base + GIO_REG_STAT);
++
++register_cyclic:
++	rpi_pwr_btn.power_off_on_halt = rpi_eeprom_power_off_on_halt();
++
++	cyclic_register(&rpi_pwr_btn.cyclic, rpi_power_btn_poll,
++			RPI_PWR_BTN_POLL_US, "rpi_pwr_btn");
++
++	printf("RPI: Power button monitoring enabled (GPIO%u, %s, %s)\n",
++	       gpio_offset,
++	       rpi_pwr_btn.bank_base ? "edge+level" : "level-only",
++	       rpi_pwr_btn.power_off_on_halt ? "power-off" : "reset");
++}
++#else
++static inline void rpi_register_power_button(void) {}
++#endif /* CONFIG_CYCLIC && CONFIG_DM_GPIO */
 +
 +int board_late_init(void)
 +{
@@ -482,6 +749,8 @@ index b0a1484c0fa..c7130364f64 100644
 +
 +	printf("RPI: RP1 initialized successfully\n");
 +
++	rpi_register_power_button();
++
 +	return 0;
 +}
 +#endif
@@ -500,7 +769,7 @@ index b0a1484c0fa..c7130364f64 100644
  }
  
  static bool is_rpi3(void)
-@@ -681,30 +743,33 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -681,30 +1012,33 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	struct {
  		const char *fdt_compatible;
  		const char *acpi_scope;
@@ -549,7 +818,7 @@ index b0a1484c0fa..c7130364f64 100644
  		    (is_rpi3() && !map[i].on_rpi3)) {
  			enabled = false;
  		} else {
-@@ -743,7 +808,7 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -743,7 +1077,7 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	acpigen_write_name_integer(ctx, "_STA", enabled ? 0xf : 0);
  	acpigen_pop_len(ctx);
  
@@ -569,7 +838,7 @@ index 9ac9d6768ca..4ce9b2e71c7 100644
 -boot_targets=mmc usb pxe dhcp
 +boot_targets=mmc usb nvme dhcp
 diff --git a/configs/rpi_arm64_defconfig b/configs/rpi_arm64_defconfig
-index 69e8e72c5d7..7fd1d31b0f6 100644
+index 69e8e72c5d7..56758a25896 100644
 --- a/configs/rpi_arm64_defconfig
 +++ b/configs/rpi_arm64_defconfig
 @@ -4,7 +4,7 @@ CONFIG_ARCH_BCM283X=y
@@ -619,15 +888,11 @@ index 69e8e72c5d7..7fd1d31b0f6 100644
  CONFIG_SYS_DFU_DATA_BUF_SIZE=0x100000
  CONFIG_SYS_DFU_MAX_FILE_SIZE=0x200000
  CONFIG_BCM2835_GPIO=y
-@@ -65,3 +76,53 @@ CONFIG_VIDEO_BCM2835=y
+@@ -65,3 +76,49 @@ CONFIG_VIDEO_BCM2835=y
  CONFIG_CONSOLE_SCROLL_LINES=10
  CONFIG_PHYS_TO_BUS=y
  # CONFIG_HEXDUMP is not set
 +CONFIG_BCM2712=y
-+CONFIG_WDT=y
-+CONFIG_WDT_BCM2835=y
-+CONFIG_SYSRESET=n
-+CONFIG_SYSRESET_WATCHDOG=y
 +CONFIG_MFD_RP1=y
 +CONFIG_RP1_GPIO=y
 +CONFIG_RESET_BRCMSTB=y
@@ -4216,112 +4481,6 @@ index 0c81e606622..0e0cc1979eb 100644
  	{ .compatible = "brcm,bcm2708-fb" },
  #if !IS_ENABLED(CONFIG_VIDEO_DT_SIMPLEFB)
  	{ .compatible = "simple-framebuffer" },
-diff --git a/drivers/watchdog/bcm2835_wdt.c b/drivers/watchdog/bcm2835_wdt.c
-index 3c1ead3dda6..60c69fa19f8 100644
---- a/drivers/watchdog/bcm2835_wdt.c
-+++ b/drivers/watchdog/bcm2835_wdt.c
-@@ -7,11 +7,14 @@
-  */
- 
- #include <dm.h>
-+#include <dm/lists.h>
-+#include <sysreset.h>
- #include <wdt.h>
- #include <asm/io.h>
- #include <linux/delay.h>
- 
- #define PM_RSTC					0x1c
-+#define PM_RSTS					0x20
- #define PM_WDOG					0x24
- 
- #define PM_PASSWORD				0x5a000000
-@@ -24,6 +27,13 @@
- #define PM_RSTC_WRCFG_FULL_RESET		0x00000020
- #define PM_RSTC_RESET				0x00000102
- 
-+/*
-+ * Partition 63 in RSTS signals the VPU firmware to halt rather than reboot.
-+ * With POWER_OFF_ON_HALT=1 in the EEPROM bootloader config the PMIC cuts power;
-+ * otherwise the firmware waits for a power-button press before restarting.
-+ */
-+#define PM_RSTS_RASPBERRYPI_HALT		0x555
-+
- #define MS_TO_WDOG_TICKS(x) (((x) << 16) / 1000)
- 
- struct bcm2835_wdt_priv {
-@@ -107,9 +117,51 @@ static const struct udevice_id bcm2835_wdt_ids[] = {
- 	{ /* sentinel */ }
- };
- 
-+/*
-+ * Sysreset driver bound when the "system-power-controller" property is
-+ * present on the pm node.  Handles both cold/warm reset (via the watchdog)
-+ * and POWER_OFF (sets the VPU halt partition in RSTS before triggering the
-+ * watchdog so the firmware halts instead of rebooting).
-+ */
-+static int bcm2835_wdt_sysreset_request(struct udevice *dev,
-+					enum sysreset_t type)
-+{
-+	struct bcm2835_wdt_priv *priv = dev_get_priv(dev->parent);
-+	void __iomem *base = priv->base;
-+	u32 val;
-+
-+	switch (type) {
-+	case SYSRESET_POWER_OFF:
-+		/* Signal VPU to halt (partition 63) before triggering reset */
-+		val = readl(base + PM_RSTS);
-+		val |= PM_PASSWORD | PM_RSTS_RASPBERRYPI_HALT;
-+		writel(val, base + PM_RSTS);
-+		fallthrough;
-+	case SYSRESET_COLD:
-+	case SYSRESET_WARM:
-+		bcm2835_wdt_expire_now(dev->parent, 0);
-+		break;
-+	default:
-+		return -EPROTONOSUPPORT;
-+	}
-+
-+	return -EINPROGRESS;
-+}
-+
-+static struct sysreset_ops bcm2835_wdt_sysreset_ops = {
-+	.request = bcm2835_wdt_sysreset_request,
-+};
-+
-+U_BOOT_DRIVER(bcm2835_wdt_sysreset) = {
-+	.name	= "bcm2835_wdt_sysreset",
-+	.id	= UCLASS_SYSRESET,
-+	.ops	= &bcm2835_wdt_sysreset_ops,
-+};
-+
- static int bcm2835_wdt_probe(struct udevice *dev)
- {
- 	struct bcm2835_wdt_priv *priv = dev_get_priv(dev);
-+	int ret;
- 
- 	priv->base = dev_remap_addr(dev);
- 	if (!priv->base)
-@@ -119,6 +171,20 @@ static int bcm2835_wdt_probe(struct udevice *dev)
- 
- 	bcm2835_wdt_stop(dev);
- 
-+	/*
-+	 * If this node is the system power controller, bind a sysreset
-+	 * child device so that "poweroff" and sysreset_walk(POWER_OFF)
-+	 * route through the watchdog halt path.
-+	 */
-+	if (CONFIG_IS_ENABLED(SYSRESET_WATCHDOG) &&
-+	    dev_read_bool(dev, "system-power-controller")) {
-+		ret = device_bind_driver_to_node(dev, "bcm2835_wdt_sysreset",
-+						 "sysreset", dev_ofnode(dev),
-+						 NULL);
-+		if (ret)
-+			log_warning("bcm2835_wdt: failed to bind sysreset: %d\n", ret);
-+	}
-+
- 	return 0;
- }
- 
 diff --git a/include/broadcom/bcm_board_types.h b/include/broadcom/bcm_board_types.h
 new file mode 100644
 index 00000000000..3508b40fa9c
