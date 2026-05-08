@@ -261,8 +261,6 @@ jobs:
     outputs:
       image_name: ${{ steps.create_image.outputs.image_name }}
       image_size: ${{ steps.create_image.outputs.image_size }}
-      iso_name: ${{ steps.create_iso.outputs.iso_name }}
-      iso_size: ${{ steps.create_iso.outputs.iso_size }}
       release: ${{ needs.determine-version.outputs.release }}
 
     steps:
@@ -324,14 +322,13 @@ jobs:
           IMAGE_NAME="uboot-rpi.img"
           dd if=/dev/zero of="$IMAGE_NAME" bs=1M count=$IMAGE_SIZE status=progress
 
-          # Create partition table with proper type for Pi 5
-          # Use sfdisk to set partition type to 0x0c (W95 FAT32 LBA)
+          # Create GPT partition table with EFI System Partition for UEFI boot
           cat > partition.sfdisk << 'SFDISK_EOF'
-          label: dos
+          label: gpt
           unit: sectors
           sector-size: 512
 
-          start=2048, type=c, bootable
+          start=2048, type=uefi, name="EFI"
           SFDISK_EOF
 
           sfdisk "$IMAGE_NAME" < partition.sfdisk
@@ -340,8 +337,11 @@ jobs:
           LOOP_DEVICE=$(sudo losetup --find --show --partscan "$IMAGE_NAME")
           echo "Loop device: $LOOP_DEVICE"
 
+          # Wait for udev to create GPT partition device nodes (avoids race condition)
+          sudo udevadm settle
+
           # Format partition as FAT32 with explicit parameters
-          sudo mkfs.vfat -F 32 -n BOOT "${LOOP_DEVICE}p1"
+          sudo mkfs.vfat -F 32 -n "EFI" "${LOOP_DEVICE}p1"
 
           # Mount and copy files
           sudo mount "${LOOP_DEVICE}p1" ../mnt
@@ -361,29 +361,6 @@ jobs:
           echo "image_size=$IMAGE_SIZE_BYTES" >> $GITHUB_OUTPUT
 
           ls -lh "$IMAGE_NAME"*
-
-      - name: Create ISO image
-        id: create_iso
-        working-directory: out
-        env:
-          release: ${{ needs.determine-version.outputs.release }}
-        run: |
-          ISO_NAME="uboot-rpi.iso"
-
-          genisoimage \
-            -o "$ISO_NAME" \
-            -V "UBOOT_RPI" \
-            -R -J \
-            -joliet-long \
-            ../build
-
-          sha256sum "$ISO_NAME" > "${ISO_NAME}.sha256"
-
-          ISO_SIZE_BYTES=$(stat -c%s "$ISO_NAME")
-          echo "iso_name=$ISO_NAME" >> $GITHUB_OUTPUT
-          echo "iso_size=$ISO_SIZE_BYTES" >> $GITHUB_OUTPUT
-
-          ls -lh "$ISO_NAME"*
 
       - name: Compress SD card image
         working-directory: out
@@ -499,8 +476,6 @@ jobs:
           path: |
             out/${{ steps.create_image.outputs.image_name }}.xz
             out/${{ steps.create_image.outputs.image_name }}.xz.sha256
-            out/${{ steps.create_iso.outputs.iso_name }}
-            out/${{ steps.create_iso.outputs.iso_name }}.sha256
             out/release_notes.md
           retention-days: 30
 
@@ -511,8 +486,6 @@ jobs:
           echo "✅ U-Boot SD card image created successfully"
           echo "📦 SD Image: ${{ steps.create_image.outputs.image_name }}.xz"
           echo "📏 SD Uncompressed size: ${{ steps.create_image.outputs.image_size }} bytes"
-          echo "📦 ISO Image: ${{ steps.create_iso.outputs.iso_name }}"
-          echo "📏 ISO Uncompressed size: ${{ steps.create_iso.outputs.iso_size }} bytes"
           echo "🔖 U-Boot version: ${{ needs.determine-version.outputs.uboot }}"
           echo "🔖 Release version: ${release}"
           echo "🔖 Firmware version: ${{ needs.determine-version.outputs.firmware }}"
@@ -540,8 +513,6 @@ jobs:
           files: |
             artifacts/${{ needs.build-image.outputs.image_name }}.xz
             artifacts/${{ needs.build-image.outputs.image_name }}.xz.sha256
-            artifacts/${{ needs.build-image.outputs.iso_name }}
-            artifacts/${{ needs.build-image.outputs.iso_name }}.sha256
           draft: false
           prerelease: false
         env:

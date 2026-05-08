@@ -369,7 +369,7 @@ index 1dc7ce50d1d..3532a980b75 100644
  
  void __efi_runtime EFIAPI efi_reset_system(
 diff --git a/board/raspberrypi/rpi/rpi.c b/board/raspberrypi/rpi/rpi.c
-index b0a1484c0fa..5a04bb7ae93 100644
+index b0a1484c0fa..2fe86bf7ddf 100644
 --- a/board/raspberrypi/rpi/rpi.c
 +++ b/board/raspberrypi/rpi/rpi.c
 @@ -9,27 +9,35 @@
@@ -419,7 +419,53 @@ index b0a1484c0fa..5a04bb7ae93 100644
  	printf("RPI %s (0x%x)\n", model->name, revision);
  }
  
-@@ -661,11 +673,330 @@ int ft_board_setup(void *blob, struct bd_info *bd)
+@@ -644,6 +656,45 @@ int ft_board_setup(void *blob, struct bd_info *bd)
+ 	else
+ 		update_fdt_from_fw(blob, (void *)gd->fdt_blob);
+ 
++	/*
++	 * Enable MIP MSI controllers in the OS FDT.
++	 * The VPU firmware ships mip0/mip1 with status="disabled" (sometimes
++	 * using the downstream "brcm,bcm2712-mip-intc" compatible instead of
++	 * the upstream "brcm,bcm2712-mip").  pcie2 declares
++	 * msi-parent = <&mip0>, so without an active MIP MSI domain the
++	 * rp1_pci driver fails with -ENOTSUPP on pci_alloc_irq_vectors(),
++	 * which prevents RP1 (ethernet, USB, GPIO) from probing at all.
++	 */
++	{
++		static const char * const mip_compats[] = {
++			"brcm,bcm2712-mip",
++			"brcm,bcm2712-mip-intc",
++		};
++		int i, offset, ret;
++
++		for (i = 0; i < ARRAY_SIZE(mip_compats); i++) {
++			offset = -1;
++			while (true) {
++				const char *st;
++
++				offset = fdt_node_offset_by_compatible(blob, offset,
++								       mip_compats[i]);
++				if (offset < 0)
++					break;
++				st = fdt_getprop(blob, offset, "status", NULL);
++				if (!st || strcmp(st, "disabled") != 0)
++					continue;
++				ret = fdt_setprop_string(blob, offset, "status", "okay");
++				if (ret)
++					log_warning("ft_board_setup: MIP enable failed: %d\n",
++						    ret);
++				else
++					log_info("ft_board_setup: enabled MIP MSI node (%s)\n",
++						 mip_compats[i]);
++			}
++		}
++	}
++
+ 	if (CONFIG_IS_ENABLED(FDT_SIMPLEFB)) {
+ 		node = fdt_node_offset_by_compatible(blob, -1, "simple-framebuffer");
+ 		if (node < 0)
+@@ -661,11 +712,330 @@ int ft_board_setup(void *blob, struct bd_info *bd)
  	return 0;
  }
  
@@ -752,7 +798,7 @@ index b0a1484c0fa..5a04bb7ae93 100644
  }
  
  static bool is_rpi3(void)
-@@ -681,30 +1012,33 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -681,30 +1051,33 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	struct {
  		const char *fdt_compatible;
  		const char *acpi_scope;
@@ -801,7 +847,7 @@ index b0a1484c0fa..5a04bb7ae93 100644
  		    (is_rpi3() && !map[i].on_rpi3)) {
  			enabled = false;
  		} else {
-@@ -743,7 +1077,7 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -743,7 +1116,7 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	acpigen_write_name_integer(ctx, "_STA", enabled ? 0xf : 0);
  	acpigen_pop_len(ctx);
  
@@ -811,17 +857,22 @@ index b0a1484c0fa..5a04bb7ae93 100644
  		node = fdt_node_offset_by_compatible(gd->fdt_blob, -1, "brcm,bcm2711-emmc2");
  		if (node) {
 diff --git a/board/raspberrypi/rpi/rpi.env b/board/raspberrypi/rpi/rpi.env
-index 9ac9d6768ca..4ce9b2e71c7 100644
+index 9ac9d6768ca..68c81564ac0 100644
 --- a/board/raspberrypi/rpi/rpi.env
 +++ b/board/raspberrypi/rpi/rpi.env
-@@ -77,4 +77,4 @@ pxefile_addr_r=0x05500000
+@@ -77,4 +77,9 @@ pxefile_addr_r=0x05500000
  fdt_addr_r=0x05600000
  ramdisk_addr_r=0x05700000
  
 -boot_targets=mmc usb pxe dhcp
 +boot_targets=mmc usb nvme dhcp
++
++#ifdef CONFIG_CMD_BOOTMENU
++bootmenu_0=UEFI Boot Manager=bootefi bootmgr
++bootmenu_1=UEFI Maintenance Menu=eficonfig
++#endif  /* CONFIG_CMD_BOOTMENU */
 diff --git a/configs/rpi_arm64_defconfig b/configs/rpi_arm64_defconfig
-index 69e8e72c5d7..56758a25896 100644
+index 69e8e72c5d7..199c607d4a7 100644
 --- a/configs/rpi_arm64_defconfig
 +++ b/configs/rpi_arm64_defconfig
 @@ -4,7 +4,7 @@ CONFIG_ARCH_BCM283X=y
@@ -833,7 +884,7 @@ index 69e8e72c5d7..56758a25896 100644
  CONFIG_OF_LIBFDT_OVERLAY=y
  CONFIG_DM_RESET=y
  CONFIG_SYS_LOAD_ADDR=0x1000000
-@@ -15,24 +15,35 @@ CONFIG_BOOTSTD_DEFAULTS=y
+@@ -15,7 +15,7 @@ CONFIG_BOOTSTD_DEFAULTS=y
  CONFIG_OF_BOARD_SETUP=y
  CONFIG_FDT_SIMPLEFB=y
  CONFIG_USE_PREBOOT=y
@@ -842,28 +893,21 @@ index 69e8e72c5d7..56758a25896 100644
  CONFIG_SYS_PBSIZE=1049
  # CONFIG_DISPLAY_CPUINFO is not set
  # CONFIG_DISPLAY_BOARDINFO is not set
- CONFIG_MISC_INIT_R=y
- CONFIG_SYS_PROMPT="U-Boot> "
- CONFIG_CMD_NVEDIT_EFI=y
-+CONFIG_CMD_NVEDIT_LOAD=y
- CONFIG_CMD_GPIO=y
+@@ -26,13 +26,19 @@ CONFIG_CMD_GPIO=y
  CONFIG_CMD_MMC=y
  CONFIG_CMD_PCI=y
  CONFIG_CMD_USB=y
- CONFIG_CMD_EFIDEBUG=y
+-CONFIG_CMD_EFIDEBUG=y
  CONFIG_CMD_FS_UUID=y
 -CONFIG_ENV_FAT_DEVICE_AND_PART="0:1"
 +CONFIG_CMD_IMPORTENV=y
 +CONFIG_CMD_EXPORTENV=y
 +CONFIG_ENV_OVERWRITE=y
 +CONFIG_ENV_IS_NOWHERE=y
++# CONFIG_ENV_IS_IN_FAT=y
 +CONFIG_ENV_VARS_UBOOT_CONFIG=y
 +CONFIG_VERSION_VARIABLE=y
  CONFIG_ENV_VARS_UBOOT_RUNTIME_CONFIG=y
-+# UEFI variable persistence
-+CONFIG_FAT_WRITE=y
-+CONFIG_EFI_VARIABLE_FILE_STORE=y
-+# CONFIG_ENV_RELOC_GD_ENV_ADDR=y
  CONFIG_TFTP_TSIZE=y
  CONFIG_DM_DMA=y
  CONFIG_DFU_MMC=y
@@ -871,7 +915,7 @@ index 69e8e72c5d7..56758a25896 100644
  CONFIG_SYS_DFU_DATA_BUF_SIZE=0x100000
  CONFIG_SYS_DFU_MAX_FILE_SIZE=0x200000
  CONFIG_BCM2835_GPIO=y
-@@ -65,3 +76,49 @@ CONFIG_VIDEO_BCM2835=y
+@@ -65,3 +71,69 @@ CONFIG_VIDEO_BCM2835=y
  CONFIG_CONSOLE_SCROLL_LINES=10
  CONFIG_PHYS_TO_BUS=y
  # CONFIG_HEXDUMP is not set
@@ -894,22 +938,13 @@ index 69e8e72c5d7..56758a25896 100644
 +CONFIG_BLKMAP=y
 +# Boot config
 +CONFIG_BOOTSTD=y
-+CONFIG_BOOTMETH_EFILOADER=n
 +CONFIG_PXE_UTILS=n
-+# EFI
-+CONFIG_EFI_BOOTMGR=n
-+CONFIG_CMD_BOOTEFI_BOOTMGR=n
 +# Expo Menu
 +CONFIG_BOOTSTD_FULL=y
 +CONFIG_BOOTSTD_BOOTCOMMAND=y
-+# CONFIG_EXPO=y
-+# CONFIG_BOOTSTD_MENU=y
-+# CONFIG_CMD_BOOTMENU=y
-+# CONFIG_CMD_BOOTFLOW_FULL=y
-+# CONFIG_AUTOBOOT_MENU_SHOW=y
 +# PXE
-+CONFIG_DHCP_PXE_CLIENTARCH=0xb # EFI ARM64 (IANA arch 11)
-+CONFIG_BOOTP_VCI_STRING="PXEClient" # Vendor Class Identifier (60)
++CONFIG_DHCP_PXE_CLIENTARCH=0xb
++CONFIG_BOOTP_VCI_STRING="PXEClient"
 +CONFIG_BOOTP_PXE=y
 +CONFIG_BOOTP_PXE_DHCP_OPTION=y
 +CONFIG_BOOTP_MAY_FAIL=y
@@ -921,6 +956,35 @@ index 69e8e72c5d7..56758a25896 100644
 +CONFIG_GENERATE_SMBIOS_TABLE=y
 +CONFIG_CMD_SMBIOS=y
 +CONFIG_LOCALVERSION_AUTO=n
++# UEFI variable persistence
++CONFIG_FAT_WRITE=y
++# CONFIG_ENV_IMPORT_FDT=y
++# CONFIG_ENV_APPEND is not set
++# CONFIG_ENV_WRITEABLE_LIST is not set
++# CONFIG_ENV_ACCESS_IGNORE_FORCE is not set
++# CONFIG_USE_BOOTFILE is not set
++# CONFIG_USE_ETHPRIME is not set
++# CONFIG_USE_HOSTNAME is not set
++# CONFIG_ENV_FAT_INTERFACE="usb"
++# CONFIG_ENV_FAT_DEVICE_AND_PART="0:1"
++# CONFIG_ENV_RELOC_GD_ENV_ADDR=y
++# EFI
++CONFIG_EFI_VARIABLE_FILE_STORE=n
++CONFIG_EFI_RT_VOLATILE_STORE=n
++CONFIG_EFI_BOOTMGR=n
++CONFIG_CMD_BOOTEFI_BOOTMGR=n
++CONFIG_CMD_NVEDIT_EFI=n
++CONFIG_CMD_NVEDIT_SELECT=y
++CONFIG_CMD_EFICONFIG=n
++CONFIG_CMD_EFIDEBUG=n
++CONFIG_CMD_NVEDIT_LOAD=y
++CONFIG_ENV_FAT_FILE="machine.env"
++# Expo Menu
++CONFIG_CMD_BOOTMENU=n
++# CONFIG_EXPO=y
++# CONFIG_BOOTSTD_MENU=y
++# CONFIG_CMD_BOOTFLOW_FULL=y
++# CONFIG_AUTOBOOT_MENU_SHOW=y
 diff --git a/drivers/clk/Kconfig b/drivers/clk/Kconfig
 index c88931c8ec4..4451a657386 100644
 --- a/drivers/clk/Kconfig
