@@ -1,0 +1,580 @@
+ls
+ls /
+bash
+sh
+exit
+ssh-import-id
+ssh
+ssh-import
+curl
+wget
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+curl -sL https://github.com/appkins.keys >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+cat ~/.ssh/authorized_keys
+exit
+ls /data
+ls /data/tmp
+cat /etc/profile
+ls -la /etc
+ls
+ls /
+/etc/init.d/S99ipmi_sim
+/etc/init.d/S99ipmi_sim start
+cd /data
+ls
+ls tmp
+mount uboot-raspberrypi-2026.04-rc4.1.img ./tmp
+mount -o loop uboot-raspberrypi-2026.04-rc4.1.img ./tmp
+ls tmp
+losetup -fP uboot-raspberrypi-2026.04-rc4.1.img
+ls /dev
+mount /dev/loop0p1 ./tmp
+ls
+ls tmp
+cat ./tmp/config.txt
+vi ./tmp/config.txt
+ls
+ls /
+/etc/init.d/S99ipmi_sim restart
+/etc/init.d/S99ipmi_sim status
+/etc/init.d/S99ipmi_sim stop
+/etc/init.d/S99ipmi_sim status
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+/etc/init.d/S99ipmi_sim stop
+/etc/init.d/S99ipmi_sim status
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim stop
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+/etc/init.d/S99ipmi_sim stop
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+cat /etc/ipmi/lan.conf
+ls
+ls /
+ls /ipmi
+ls /etc
+ls /etc/ipmi
+cat /etc/ipmi/lan.conf
+ls /etc
+ls /etc/etc
+cat /etc/ipmi/lan.conf
+/etc/init.d/S99ipmi_sim stop
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+/etc/init.d/S99ipmi_sim restart
+/etc/init.d/S99ipmi_sim status
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+ls /etc/ipmi
+ls /var/log
+cat /var/ipmi_sim/ipmisim1
+ls /var/ipmi_sim/ipmisim1
+ls /var/ipmi_sim/ipmisim1/ipmi_sim/
+ls /var/ipmi_sim/ipmisim1/ipmi_sim/ipmisim1
+cagt /var/ipmi_sim/ipmisim1/ipmi_sim/ipmisim1
+cat /var/ipmi_sim/ipmisim1/ipmi_sim/ipmisim1
+cagt /var/ipmi_sim/ipmisim1/ipmi_sim/ipmisim1
+ls /var/ipmi_sim/ipmisim1/ipmi_sim/ipmisim1
+ipmi_sim -f /etc/ipmi/ipmisim1.emu -c /etc/ipmi/lan.conf -s /var/ipmi_sim/ipmisim1
+cat /etc/ipmi/lan.conf
+ipmi_sim -f /etc/ipmi/ipmisim1.emu -c /etc/ipmi/lan.conf -s /var/ipmi_sim/ipmisim1
+ls
+/etc/init.d/S99ipmi_sim restart
+/etc/init.d/S99ipmi_sim status
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+/etc/init.d/S99ipmi_sim stop
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+ls /var
+ls /var/ipmi_sim/
+ls /var/ipmi_sim/ipmisim1/
+rm -rf /var/ipmi_sim/ipmisim1
+ls /var
+ls /var/ipmi_sim/
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+ls -la /etc/init.d
+cat /etc/init.d/S99ipmi_sim
+ls /var/run/
+cat /var/run/ipmi_sim.pid
+kill -o 2293
+kill -0 2293
+rm /var/run/ipmi_sim.pid
+/etc/init.d/S99ipmi_sim status
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+cat /var/run/ipmi_sim.pid
+kill -0 2444
+ipmi_sim -f /etc/ipmi/ipmisim1.emu -c /etc/ipmi/lan.conf -s /var >/dev/null 2>&1 &
+echo $! > /var/run/ipmi_sim.pid
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+/etc/init.d/S99ipmi_sim stop
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+ipmi_sim -f /etc/ipmi/ipmisim1.emu -c /etc/ipmi/lan.conf -s /var/ipmi_sim/ipmisim1 >/dev/null 2>&1 &
+PIDFILE=/var/run/ipmi_sim.pid
+ipmi_sim -f /etc/ipmi/ipmisim1.emu -c /etc/ipmi/lan.conf -s /var/ipmi_sim/ipmisim1 >/dev/null 2>&1 &
+echo $! > "${PIDFILE}"
+ipmi_sim -f /etc/ipmi/ipmisim1.emu -c /etc/ipmi/lan.conf -s /var/ipmi_sim/ipmisim1 >/dev/null 2>&1 &
+echo $! > "${PIDFILE}"
+cat /var/run/ipmi_sim.pid
+kill -0 2627
+ps
+rm /var/run/ipmi_sim.pid
+ps
+kill 2503
+ps
+kill -0 2503
+ps
+kill 2503
+ps
+kill 2503
+pkill 2503
+kill -h
+killall ipmi_sim
+ps
+killall ipmi_sim -f /etc/ipmi/ipmisim1.emu -c /etc/ipmi/lan.conf -s /var
+kill 570
+kill 2503
+ps
+kill 3587
+kill 2503
+ps
+kill -1 2503
+ps
+kill -a 2503
+kill -h
+man kill
+kill
+rm /var/run/ipmi_sim.pid
+ls /var/run
+ps
+kill 2503
+ps
+reboot
+/etc/init.d/S99ipmi_sim status
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+ps
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+ps
+ipmi_sim -f /etc/ipmi/ipmisim1.emu -c /etc/ipmi/lan.conf -s /var/ipmi_sim/ipmisim1
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+ls /var
+ls /var/run
+rm /var/run/ipmi_sim.pid
+ps
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+cat /var/run/ipmi_sim.pid
+kill 1334
+ps
+ps -h
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+/etc/init.d/S99ipmi_sim restart
+/etc/init.d/S99ipmi_sim status
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+ls /var/log
+/etc/init.d/S99ipmi_sim stop
+ps
+ls /var/
+ls /var/run
+rm /var/run/ipmi_sim.pid
+/etc/init.d/S99ipmi_sim stop
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+ps
+ls /etc/init.d
+cat /etc/init.d/S30rndis
+vi /etc/secrets
+ls ~/.ssh
+echo "$HOME"
+cat /etc/secrets
+ssh root@10.0.92.76
+/etc/init.d/S99ipmi_sim stop
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+. /etc/profile
+echo $UNIFI_USER
+ssh -q "${UNIFI_USER}"@"${UNIFI_HOST}" swctrl poe show id "${UNIFI_PORT}" | tail -n1 | awk '{$1=$1;print}' | cut -d' ' -f2 | grep -q '^Auto$'
+ssh -q "${UNIFI_USER}"@"${UNIFI_HOST}" swctrl poe show id "${UNIFI_PORT}" | tail -n1 | awk '{$1=$1;print}' | cut -d' ' -f2 | grep -q '^Auto$' && echo 1 || echo 0
+ssh -q "${UNIFI_USER}"@"${UNIFI_HOST}" swctrl poe show id "${UNIFI_PORT}" | tail -n1 | awk '{$1=$1;print}' | cut -d' ' -f2 | grep -q '^Aut$' && echo 1 || echo 0
+ssh -q "${UNIFI_USER}"@"${UNIFI_HOST}" swctrl poe
+ls /etc/init.d
+cat /etc/init.d/S02sysctl
+ls /etc/sysctl.d/
+cat /etc/sysctl.conf
+ls /etc/init.d
+fstab
+cat etc
+ls /etc
+cat /etc/fstab
+mount
+ls /dev
+lsblk
+ls /dev/disk
+ls /dev/disk/by-id
+ls /
+ls /kvmapp
+ls /kvmapp/server
+ls
+cd /data
+ls
+lodevice
+losetup
+history | grep lo
+losetup -fP uboot-raspberrypi-2026.04-rc4.1.img
+  30 ls /dev
+  31 mount /dev/loop0p1 ./tmp
+ls
+ls tmp
+mount /dev/loop0p1 ./tmp
+ls tmp
+cd tmp
+vi config.txt
+losetup -h
+vi config.txt
+losetup -D
+losetup -d
+losetup -d /dev/loop0p1
+losetup -d /dev/loop0
+cd ..
+ls
+umount tmp
+rm u-boot.bin
+ls
+unxz uboot-raspberrypi-2026.04-rc4.1.img.xz
+losetup -fP uboot-raspberrypi-2026.04-rc4.1.img
+mount /dev/loop0p1 ./tmp
+ls tmp
+umount tmp
+mount /dev/loop0p1 ./tmp
+cd tmp
+ls
+vi config.txt
+umount tmp
+ls
+cd ..
+umount tmp
+ls
+losetup -d /dev/loop0
+losetup -d /dev/loop1
+losetup -fP uboot-raspberrypi-2026.04-rc4.1.img
+mount /dev/loop0p1 ./tmp
+vi tmp/config.txt
+cat tmp/config.txt
+df
+ls /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/file
+ls
+umount /dev/loop0p1 ./tmp
+umount tmp
+umount ./tmp
+umount /dev/loop0p1
+umount /dev/loop0
+losetup -d /dev/loop1
+losetup -d /dev/loop0
+ls tmp
+mount /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/file ./tmp
+mount -h
+readlink /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/file
+ls -la /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0
+ls -la /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0
+readlink /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/file
+cat /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/file
+ls /sys/class/gpio/gpio503/direction
+cat /sys/class/gpio/gpio503/direction
+cat /sys/class/gpio/export
+ls /sys/class/tpio
+ls /sys/class/gpio
+sudo cat /sys/class/gpio/export
+cat /sys/class/gpio/export
+cat /sys/class/gpio/gpio503/value
+echo 1 > /sys/class/gpio/gpio503/value
+echo 0 > /sys/class/gpio/gpio503/value
+ls
+find / -type f -name libopencv_video.so.409
+find / -type f -name libopencv_video.so
+find / -type f -name libkvm.so
+ls /kvmapp/server/dl_lib
+ls /
+ls /kvmapp
+ls /kvmapp/server
+ls /kvmapp/server/web
+ls /kvmapp/server/web/assets
+cat /etc/kvm/server.yaml
+ls /kvmapp
+ls /kvmapp/server
+ls /kvmapp/server/web
+ls /kvmapp/server/web/assets
+ip
+hostname -i
+hostname -I
+hostname
+ip a
+ls
+ls /kvmapp
+ls /kvmapp/server
+ls /kvmapp/server/web
+mv /kvmapp/server/web/dist/* /kvmapp/server/web/
+mv -r /kvmapp/server/web/dist/* /kvmapp/server/web/
+mv -f /kvmapp/server/web/dist/* /kvmapp/server/web/
+mv -f /kvmapp/server/web/dist/assets/* /kvmapp/server/web/assets/
+ls
+ls /kvmapp/server/web/dist/assets/
+ls /kvmapp/server/web/
+ls /kvmapp/server/web/dist
+ls /kvmapp/server/web/dist/assets
+rm -rf /kvmapp/server/web/dist
+ip -h
+ip addr -h
+ip addr help
+ip addr show dev eth0
+ip addr show dev eth0 | grep inet
+ip addr show dev eth0 | grep inet | grep 10
+ip addr show dev eth0 | grep inet | grep 10 | cut -d' ' -f1
+ip addr show dev eth0 | grep inet | grep 10 | cut -d' ' -f2
+ip addr show dev eth0 | grep inet | grep 10 | cut -d' ' -f4
+ip addr show dev eth0 | grep inet | grep 10 | cut -d' ' -f5
+ip addr show dev eth0 | grep inet | grep 10 | cut -d' ' -f6
+ls /etc/init.d
+cat /etc/init.d/S15kvmhwd
+echo 1 > /sys/class/gpio/gpio503/value
+echo 0 > /sys/class/gpio/gpio503/value
+echo 1 > /sys/class/gpio/gpio503/value
+echo 0 > /sys/class/gpio/gpio503/value
+echo 1 > /sys/class/gpio/gpio503/value
+echo 0 > /sys/class/gpio/gpio503/value
+echo 1 > /sys/class/gpio/gpio503/value
+echo 0 > /sys/class/gpio/gpio503/value
+echo 1 > /sys/class/gpio/gpio503/value
+echo 0 > /sys/class/gpio/gpio503/value
+echo 1 > /sys/class/gpio/gpio503/value
+echo 0 > /sys/class/gpio/gpio503/value
+echo 1 > /sys/class/gpio/gpio503/value
+echo 0 > /sys/class/gpio/gpio503/value
+echo 1 > /sys/class/gpio/gpio503/value
+echo 0 > /sys/class/gpio/gpio503/value
+echo 1 > /sys/class/gpio/gpio503/value
+echo 0 > /sys/class/gpio/gpio503/value
+echo 1 > /sys/class/gpio/gpio503/value
+echo 0 > /sys/class/gpio/gpio503/value
+echo 1 > /sys/class/gpio/gpio503/value
+echo 0 > /sys/class/gpio/gpio503/value
+echo 1 > /sys/class/gpio/gpio503/value
+echo 0 > /sys/class/gpio/gpio503/value
+echo 1 > /sys/class/gpio/gpio503/value
+echo 0 > /sys/class/gpio/gpio503/value
+echo 1 > /sys/class/gpio/gpio503/value
+echo 0 > /sys/class/gpio/gpio503/value
+echo 1 > /sys/class/gpio/gpio503/value
+echo 0 > /sys/class/gpio/gpio503/value
+echo 1 > /sys/class/gpio/gpio503/value
+echo 0 > /sys/class/gpio/gpio503/value
+echo 1 > /sys/class/gpio/gpio503/value
+echo 0 > /sys/class/gpio/gpio503/value
+echo 1 > /sys/class/gpio/gpio503/value
+echo 0 > /sys/class/gpio/gpio503/value
+echo 1 > /sys/class/gpio/gpio503/value
+echo 0 > /sys/class/gpio/gpio503/value
+echo 1 > /sys/class/gpio/gpio503/value
+echo 0 > /sys/class/gpio/gpio503/value
+echo 1 > /sys/class/gpio/gpio503/value
+which start-stop-daemon
+start-stop-daemon -h
+which ssh-keygen
+ls /usr/bin | grep ssh
+ipmi_sim -h
+ipmi_sim --help
+ipmi_sim --usage
+start-stop-daemon -h
+which ipmi_sim
+ls -la /usr/bin/ipmi_sim
+ls /usr/sbin/
+ls /usr/sbin/ipmi_sim
+ls /usr/sbin/ipmievd
+/usr/sbin/ipmievd
+/usr/sbin/ipmievd -h
+ipmi_sim
+ipmi_sim -h
+ls /etc/init.d
+/etc/init.d/S99ipmi_sim stop
+start-stop-daemon -S -p "$PIDFILE" -x "/usr/bin/ipmi_sim -n -f /etc/ipmi/ipmisim1.emu -c /etc/ipmi/lan.conf -s /var/ipmi_sim/ipmisim1" -- --pid-file="/var/run/ipmi_sim.pid"
+start-stop-daemon -S -p "/var/run/ipmi_sim.pid" -x "/usr/bin/ipmi_sim" -- -n -f /etc/ipmi/ipmisim1.emu -c /etc/ipmi/lan.conf -s /var/ipmi_sim/ipmisim1
+start-stop-daemon -h
+start-stop-daemon -S -b -p "/var/run/ipmi_sim.pid" -x "/usr/bin/ipmi_sim" -- -n -f /etc/ipmi/ipmisim1.emu -c /etc/ipmi/lan.conf -s /var/ipmi_sim/ipmisim1
+pid
+plist
+ps
+start-stop-daemon -h
+ls /var
+ls /var/log
+ls /var/log/kvm_system/
+ls /var/log/kvm_system/kvm_system
+cat /var/log/kvm_system/kvm_system
+clear
+ls /var/log/kvm_system/
+ls /var/log/
+ls /var/log/server
+ls /var/log/server/web
+ls -la /var/log
+ls /var/log
+ls /var
+ls /var/ipmi_sim
+ls /var/log/syslog
+ls /var/log
+ls /var/log/messages
+cat /var/log/messages.0
+clear
+ls
+start-stop-daemon
+ip addr dev eth0
+ip addr dev eth1
+ip addr show dev eth0
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+start-stop-daemon --status -p "/var/run/ipmi_sim.pid" -x "/usr/bin/ipmi_sim"
+start-stop-daemon -t -p "/var/run/ipmi_sim.pid" -x "/usr/bin/ipmi_sim"
+start-stop-daemon -K -t -p "/var/run/ipmi_sim.pid" -x "/usr/bin/ipmi_sim"
+start-stop-daemon -K -t -x "/usr/bin/ipmi_sim"
+start-stop-daemon -K -t "/usr/bin/ipmi_sim"
+start-stop-daemon -K -x "/usr/bin/ipmi_sim"
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+start-stop-daemon -K -x "/usr/bin/ipmi_sim"
+/etc/init.d/S99ipmi_sim status
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+/etc/init.d/S99ipmi_sim stop
+/etc/init.d/S99ipmi_sim status
+/etc/init.d/S99ipmi_sim start
+/etc/init.d/S99ipmi_sim status
+ls /sys/class/udc/
+ls /sys/class/udc/4340000.usb/
+ls /sys/kernel/config/usb_gadget/g0/UDC
+cat /sys/kernel/config/usb_gadget/g0/UDC
+ls /sys/kernel/config/usb_gadget/g0/UDC
+ls /sys/class/udc/4340000.usb/
+ls /sys/class/udc/4340000.usb/device
+ls /sys/class/udc/4340000.usb/device/usb1
+ls /sys/class/udc/4340000.usb/device/usb1/dev
+ls /sys/class/udc/4340000.usb/device/
+ls /sys/class/udc/4340000.usb/
+ls /sys/class/udc/4340000.usb/device
+ls /sys/class/udc/4340000.usb/device/udc
+ls /sys/class/udc/4340000.usb/device/usb1
+ls /sys/class/udc/4340000.usb/
+ls /sys/class/udc/4340000.usb/function
+cat /sys/class/udc/4340000.usb/function
+cat /sys/class/udc/4340000.usb/state
+ls /sys/class/udc/4340000.usb/function
+ls /sys/kernel/config/usb_gadget/g0/UDC
+cat /sys/class/udc/4340000.usb/state
+cat /sys/kernel/config/usb_gadget/g0/UDC
+ls /sys/kernel/config/usb_gadget/g0/UDC
+ls /sys/kernel/config/usb_gadget/g0
+ls /sys/kernel/config/usb_gadget/g0/functions
+ls /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/
+ls /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/
+cd /data
+ls
+history | grep lo
+losetup -fP uboot-raspberrypi-2026.04-rc4.1.img
+ls /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/
+cat /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/file
+echo "/dev/loop0" > /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/file
+mount /dev/loop0p1 ./tmp
+ls tmp
+echo 0 > /sys/class/gpio/gpio503/value && echo 1 > /sys/class/gpio/gpio503/value
+echo 0 > /sys/class/gpio/gpio503/value && sleep 1 && echo 1 > /sys/class/gpio/gpio503/value
+ls /sys/kernel/config/usb_gadget
+ls /sys/kernel/config/usb_gadget/g0
+ls /sys/kernel/config/usb_gadget/g0/functions/
+ls /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/
+ls /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/
+cat /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/ro
+cat /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/cdrom
+cat /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/removable
+cat /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/inquiry_string
+cat /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/file
+echo /dev/loop0 > /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/file
+cat /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/file
+curl -sfL https://github.com/tinkerbell-community/uboot-raspberrypi/releases/download/v2026.04-rc4.1/uboot-raspberrypi-2026.04-rc4.1.img.xz
+ls
+curl -sfLO https://github.com/tinkerbell-community/uboot-raspberrypi/releases/download/v2026.04-rc4.1/uboot-raspberrypi-2026.04-rc4.1.img.xz
+ls
+unxz uboot-raspberrypi-2026.04-rc4.1.img.xz
+losetup -D uboot-raspberrypi-2026.04-rc4.1.img
+losetup -d
+losetup -D
+losetup -d /dev/loop0
+umount ./tmp
+rm uboot-raspberrypi-2026.04-rc4.1.img
+ls
+unxz uboot-raspberrypi-2026.04-rc4.1.img.xz
+losetup -fP uboot-raspberrypi-2026.04-rc4.1.img
+echo /dev/loop0 > /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/file
+mount /dev/loop0p1 ./tmp
+cat /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/file
+echo > /sys/kernel/config/usb_gadget/g0/UDC &&
+ls /sys/class/udc/ | cat > /sys/kernel/config/usb_gadget/g0/UDC
+cat /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/file
+ls /dev/loop
+ls /dev/loop*
+cat /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/file
+losetup -d /dev/loop1
+losetup -d /dev/loop0
+losetup -fP uboot-raspberrypi-2026.04-rc4.1.img
+ls /dev/loop
+ls /dev/loop*
+losetup -d /dev/loop1
+ls /dev/loop
+losetup -d /dev/loop0
+ls /dev/loop
+ls /dev/loop&
+ls /dev/loop*
+umount ./tmp
+losetup -d /dev/loop0
+ls /dev/loop*
+umount ./tmp
+umount
+umount -d
+umount -d ./tmp
+losetup -d /dev/loop
+losetup -d /dev/loop0
+ls /dev/loop*
+losetup -fP uboot-raspberrypi-2026.04-rc4.1.img
+mount /dev/loop1p1 ./tmp
+ls tmp
+echo /dev/loop1 > /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/file
+echo /dev/loop1 > /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/file && echo > /sys/kernel/config/usb_gadget/g0/UDC && ls /sys/class/udc/ | cat > /sys/kernel/config/usb_gadget/g0/UDC
+lsblk
+df
+echo 0 > /sys/class/gpio/gpio503/value && sleep 1 && echo 1 > /sys/class/gpio/gpio503/value
+ls /tmp
+losetup
+losetup -P -a /dev/loop1
+losetup -P -a /dev/loop1 /data/uboot-raspberrypi-2026.04-rc4.1.img
+losetup -P /dev/loop1 /data/uboot-raspberrypi-2026.04-rc4.1.img
+ls tmp
+umount --help
+umount -d ./tmp
+losetup -P /dev/loop1 /data/uboot-raspberrypi-2026.04-rc4.1.img
+umount -d ./tmp
+echo /dev/loop1 > /sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/file && echo > /sys/kernel/config/usb_gadget/g0/UDC && ls /sys/class/udc/ | cat > /sys/kernel/config/usb_gadget/g0/UDC

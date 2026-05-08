@@ -1,0 +1,569 @@
+name: Build and Release U-Boot Raspberry Pi Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      uboot_version:
+        description: "U-Boot version tag to build"
+        required: false
+        type: string
+      rpi_firmware_version:
+        description: "Raspberry Pi firmware version"
+        required: false
+        type: string
+      rpi_kernel_version:
+        description: "Raspberry Pi kernel version tag for building device tree files"
+        required: false
+        type: string
+  push:
+    tags:
+      - 'u-boot-v*'
+
+env:
+  UBOOT_VERSION: ${{ inputs.uboot_version || 'v2026.04' }}
+  RPI_FIRMWARE_VERSION: ${{ inputs.rpi_firmware_version || 'next' }}
+  RPI_KERNEL_VERSION: ${{ inputs.rpi_kernel_version || 'rpi-6.19.y' }}
+
+jobs:
+  determine-version:
+    runs-on: ubuntu-latest
+    outputs:
+      release_version: ${{ steps.version.outputs.release_version }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Required to get all tags
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get latest tag with U-Boot version prefix
+        id: previoustag
+        uses: WyriHaximus/github-action-get-previous-tag@v1
+        continue-on-error: true
+        with:
+          prefix: u-boot-${{ env.UBOOT_VERSION }}  # Match tags like u-boot-v2026.04.0
+
+      - name: Calculate next version
+        id: version
+        run: |
+          UBOOT_VER="${{ env.UBOOT_VERSION }}"
+
+          # Check if we got a previous tag
+          if [ "${{ steps.previoustag.outcome }}" == "success" ] && [ -n "${{ steps.previoustag.outputs.tag }}" ]; then
+            PREV_TAG="${{ steps.previoustag.outputs.tag }}"
+            echo "Found previous tag: $PREV_TAG"
+
+            # Extract version numbers (remove 'u-boot-v' prefix)
+            PREV_VERSION="${PREV_TAG#u-boot-v}"
+
+            # Split into parts
+            IFS='.' read -ra PARTS <<< "$PREV_VERSION"
+            MAJOR="${PARTS[0]}"
+            MINOR="${PARTS[1]}"
+            PATCH="${PARTS[2]:-0}"
+
+            # Increment patch version
+            NEW_PATCH=$((PATCH + 1))
+            RELEASE_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
+
+            echo "Incremented from $PREV_VERSION to $RELEASE_VERSION"
+          else
+            # No previous tag found, start with .0
+            RELEASE_VERSION="${UBOOT_VER#v}.0"
+            echo "No previous tag found, starting with $RELEASE_VERSION"
+          fi
+
+          echo "release_version=$RELEASE_VERSION" >> $GITHUB_OUTPUT
+          echo "Final release version: $RELEASE_VERSION"
+
+  build-uboot:
+    needs: determine-version
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      matrix:
+        config:
+          - name: rpi_arm64
+            path: u-boot.bin
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: src
+          ref: ${{ github.ref }}
+
+      - name: Checkout u-boot
+        uses: actions/checkout@v4
+        with:
+          repository: u-boot/u-boot
+          fetch-depth: 1
+          path: u-boot
+          ref: ${{ env.UBOOT_VERSION }}
+
+      - name: Cache and install build dependencies
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: build-essential git bison flex bc libssl-dev libgnutls28-dev device-tree-compiler
+          version: 1.0
+
+      - name: Configure U-Boot for Raspberry Pi 4 ARM64
+        working-directory: u-boot
+        run: |
+          patch -p1 < ${{ github.workspace }}/src/u-boot/patches/rpi_arm64_defconfig.patch
+
+          make rpi_arm64_defconfig LOCALVERSION_AUTO=n
+
+      - name: Build U-Boot
+        working-directory: u-boot
+        run: |
+          make -j $(nproc) HOSTLDLIBS_mkimage="-lssl -lcrypto" LOCALVERSION_AUTO=n
+          ls -la u-boot.bin
+
+      - name: Upload U-Boot binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: uboot-binary
+          path: u-boot/u-boot.bin
+          retention-days: 1
+          if-no-files-found: error
+
+  checkout-firmware:
+    needs: determine-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout Raspberry Pi firmware
+        uses: actions/checkout@v4
+        with:
+          repository: raspberrypi/firmware
+          fetch-depth: 1
+          path: firmware
+          ref: ${{ env.RPI_FIRMWARE_VERSION }}
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpi-firmware
+          path: |
+            firmware/boot/*.elf
+            firmware/boot/*.dat
+            firmware/boot/*.bin
+          retention-days: 1
+          if-no-files-found: error
+
+  prepare-config:
+    needs: determine-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload config.txt
+        uses: actions/upload-artifact@v4
+        with:
+          name: config-files
+          path: u-boot/config.txt
+          retention-days: 1
+          overwrite: true
+          if-no-files-found: error
+
+  build-kernel-dtbs:
+    needs: determine-version
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: src
+
+      - name: Cache and install build dependencies
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: build-essential cpp device-tree-compiler
+          version: 1.0
+
+      - name: Checkout rpi kernel
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: raspberrypi/linux
+          fetch-depth: 1
+          path: firmware
+          ref: ${{ env.RPI_KERNEL_VERSION }}
+
+      - name: Download and patch Raspberry Pi kernel source
+        working-directory: firmware
+        run: |
+          for patch in $(find ${{ github.workspace }}/src/u-boot/patches/dtb -type f -name '*.patch' | sort); do
+            echo "Applying patch $patch"
+            patch -p1 < "$patch" || (echo "Failed to apply patch $patch" && exit 1)
+          done
+
+          # Copy custom overlay DTS files into the kernel source tree
+          mkdir -p arch/arm/boot/dts/overlays/
+          cp -av ${{ github.workspace }}/src/u-boot/patches/dtb/overlays/* arch/arm/boot/dts/overlays/
+
+      - name: Build device tree binaries
+        working-directory: firmware
+        run: |
+          mkdir -p out out/overlays
+
+          export DTC_FLAGS="-R 4 -p 0x1000 -@ -H epapr"
+          for dts in arch/arm64/boot/dts/broadcom/bcm27*.dts; do
+            target=$(basename "${dts%*.dts}")
+            echo "Building $target.dtb"
+            cpp -nostdinc -I include -I arch -undef -x assembler-with-cpp \
+              -I scripts/dtc/include-prefixes/ -D__DTS__ -DFIRMWARE_UPDATED \
+              -P "$dts" -o "out/$target.dts"
+            dtc -O dtb $DTC_FLAGS -o "out/$target.dtb" "out/$target.dts"
+          done
+
+          echo "Built device tree files:"
+          ls -lah out/*.dtb
+
+          if [ -z "$(ls out/bcm2712*.dtb 2>/dev/null)" ]; then
+            echo "ERROR: No bcm2712* device tree files built"
+            exit 1
+          fi
+
+          export DTC_FLAGS="-R 0 -p 0 -@ -H epapr"
+          for dts in arch/arm/boot/dts/overlays/*.dts; do
+            # disable-v3d-overlay.dts -> disable-v3d
+            target=$(basename "${dts%*.dts}")
+            target="${target%-overlay}"
+            echo "Building $target.dtbo"
+            cpp -nostdinc -I include -I arch -undef -x assembler-with-cpp \
+              -I scripts/dtc/include-prefixes/ -D__DTS__ -DFIRMWARE_UPDATED \
+              -P "$dts" -o "out/overlays/$target.dts"
+            dtc -O dtb $DTC_FLAGS -o "out/overlays/$target.dtbo" "out/overlays/$target.dts"
+          done
+
+          # Match the names firmware wants
+          [ -f out/overlays/hat_map.dtbo ] && mv out/overlays/hat_map.dtbo out/overlays/hat_map.dtb
+          [ -f out/overlays/overlay_map.dtbo ] && mv out/overlays/overlay_map.dtbo out/overlays/overlay_map.dtb
+
+          echo "Built overlay files:"
+          ls -lah out/overlays/
+
+      - name: Upload kernel device tree files
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-dts
+          path: |
+            firmware/out/*.dtb
+            firmware/out/overlays/
+          retention-days: 1
+          if-no-files-found: error
+
+  build-image:
+    needs: [determine-version, build-uboot, checkout-firmware,prepare-config, build-kernel-dtbs]
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+
+    outputs:
+      image_name: ${{ steps.create_image.outputs.image_name }}
+      image_size: ${{ steps.create_image.outputs.image_size }}
+      iso_name: ${{ steps.create_iso.outputs.iso_name }}
+      iso_size: ${{ steps.create_iso.outputs.iso_size }}
+      release_version: ${{ needs.determine-version.outputs.release_version }}
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Cache and install build dependencies
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: dosfstools parted xz-utils genisoimage
+          version: 1.0
+
+      - name: Prepare build directory
+        run: |
+          mkdir -p build
+          mkdir -p mnt
+          mkdir -p out
+
+          # Copy U-Boot binaries
+          cp artifacts/uboot-*/*.bin build/
+          ls -lah build/
+
+          # Copy config file
+          cp artifacts/config-files/config.txt build/
+
+          # Copy firmware files
+          cp -r artifacts/rpi-firmware/* build/
+
+          # Copy patched Raspberry Pi kernel device tree files (bcm2712*)
+          # Built from raspberrypi/linux with upstream-compatibility patches applied
+          echo "Copying patched kernel device tree files..."
+          mkdir -p build/broadcom
+          cp -r artifacts/kernel-dts/*.dtb build/broadcom/
+          cp -r artifacts/kernel-dts/*.dtb build/
+
+          mkdir -p build/overlays
+          cp -r artifacts/kernel-dts/overlays/. build/overlays/
+          echo "Overlay files:"
+          ls -lah build/overlays/
+
+          echo "Build directory contents:"
+          ls -lah build/
+
+      - name: Create SD card image
+        id: create_image
+        working-directory: out
+        env:
+          RELEASE_VERSION: ${{ needs.determine-version.outputs.release_version }}
+        run: |
+          # Calculate required size (boot files + 100MB padding)
+          BOOT_SIZE=$(du -sm ../build | cut -f1)
+          IMAGE_SIZE=$((BOOT_SIZE + 100))
+
+          echo "Creating ${IMAGE_SIZE}MB image..."
+
+          # Create image file with semantic version
+          IMAGE_NAME="uboot-raspberrypi-${RELEASE_VERSION}.img"
+          dd if=/dev/zero of="$IMAGE_NAME" bs=1M count=$IMAGE_SIZE status=progress
+
+          # Create partition table with proper type for Pi 5
+          # Use sfdisk to set partition type to 0x0c (W95 FAT32 LBA)
+          cat > partition.sfdisk << 'SFDISK_EOF'
+          label: dos
+          unit: sectors
+          sector-size: 512
+
+          start=2048, type=c, bootable
+          SFDISK_EOF
+
+          sfdisk "$IMAGE_NAME" < partition.sfdisk
+
+          # Setup loop device
+          LOOP_DEVICE=$(sudo losetup --find --show --partscan "$IMAGE_NAME")
+          echo "Loop device: $LOOP_DEVICE"
+
+          # Format partition as FAT32 with explicit parameters
+          sudo mkfs.vfat -F 32 -n BOOT "${LOOP_DEVICE}p1"
+
+          # Mount and copy files
+          sudo mount "${LOOP_DEVICE}p1" ../mnt
+          sudo cp -rv ../build/* ../mnt/
+          sudo sync
+          sudo umount ../mnt
+
+          # Cleanup
+          sudo losetup -d "$LOOP_DEVICE"
+
+          # Calculate checksums
+          sha256sum "$IMAGE_NAME" > "${IMAGE_NAME}.sha256"
+
+          # Get image info
+          IMAGE_SIZE_BYTES=$(stat -c%s "$IMAGE_NAME")
+          echo "image_name=$IMAGE_NAME" >> $GITHUB_OUTPUT
+          echo "image_size=$IMAGE_SIZE_BYTES" >> $GITHUB_OUTPUT
+
+          ls -lh "$IMAGE_NAME"*
+
+      - name: Create ISO image
+        id: create_iso
+        working-directory: out
+        env:
+          RELEASE_VERSION: ${{ needs.determine-version.outputs.release_version }}
+        run: |
+          ISO_NAME="uboot-raspberrypi-${RELEASE_VERSION}.iso"
+
+          genisoimage \
+            -o "$ISO_NAME" \
+            -V "UBOOT_RPI" \
+            -R -J \
+            -joliet-long \
+            ../build
+
+          sha256sum "$ISO_NAME" > "${ISO_NAME}.sha256"
+
+          ISO_SIZE_BYTES=$(stat -c%s "$ISO_NAME")
+          echo "iso_name=$ISO_NAME" >> $GITHUB_OUTPUT
+          echo "iso_size=$ISO_SIZE_BYTES" >> $GITHUB_OUTPUT
+
+          ls -lh "$ISO_NAME"*
+
+      - name: Compress SD card image
+        working-directory: out
+        env:
+          IMAGE_NAME: ${{ steps.create_image.outputs.image_name }}
+        run: |
+          echo "Compressing SD card image..."
+          xz -9 -T 0 "${IMAGE_NAME}"
+          sha256sum "${IMAGE_NAME}.xz" > "${IMAGE_NAME}.xz.sha256"
+
+      - name: Create release notes
+        working-directory: out
+        env:
+          RELEASE_VERSION: ${{ needs.determine-version.outputs.release_version }}
+        run: |
+          cat > release_notes.md << EOF
+          # Raspberry Pi 4 U-Boot SD Card Image
+
+          ## Components
+
+          - **U-Boot Version**: \`${{ env.UBOOT_VERSION }}\`
+          - **Release Version**: \`${RELEASE_VERSION}\`
+          - **Raspberry Pi Firmware**: \`${{ env.RPI_FIRMWARE_VERSION }}\`
+          - **Raspberry Pi Kernel DTBs**: \`${{ env.RPI_KERNEL_VERSION }}\`
+          - **Architecture**: ARM64 (aarch64)
+          - **Target Device**: Raspberry Pi 4 / Raspberry Pi 400
+
+          ## Features
+
+          - PXE network boot support
+          - DHCP client built-in
+          - EFI boot support
+          - USB storage boot
+          - NVMe boot support (with patches)
+          - Custom boot command for network-first boot
+          - SMBIOS table generation (UEFI config table passed to OS)
+
+          ## Installation
+
+          ### Using Raspberry Pi Imager
+
+          1. Download \`${{ steps.create_image.outputs.image_name }}.xz\`
+          2. Open Raspberry Pi Imager
+          3. Choose "Use custom" and select the downloaded \`.xz\` file
+          4. Select your SD card
+          5. Write the image
+
+          ### Using dd (Linux/macOS)
+
+          \`\`\`bash
+          # Decompress
+          xz -d ${{ steps.create_image.outputs.image_name }}.xz
+
+          # Write to SD card (replace /dev/sdX with your SD card device)
+          sudo dd if=${{ steps.create_image.outputs.image_name }} of=/dev/sdX bs=4M status=progress
+          sudo sync
+          \`\`\`
+
+          ## Boot Configuration
+
+          The image includes a custom \`config.txt\` that:
+          - Enables 64-bit ARM mode
+          - Uses U-Boot as the kernel
+          - Configures minimal GPU memory
+          - Enables UART for debugging
+
+          ## Talos NoCloud Provisioning
+
+          Set the SMBIOS serial number to configure Talos's NoCloud metadata server before first boot:
+
+          \`\`\`bash
+          # From a Tinkerbell workflow action after flashing the SD card
+          mount /dev/mmcblk0p1 /boot
+          fw_setenv -c /boot/fw_env.config serial# "ds=nocloud-net;s=http://10.10.0.1/configs/;h=HOSTNAME"
+          umount /boot
+          \`\`\`
+
+          Talos reads \`/sys/class/dmi/id/product_serial\` and fetches:
+          - \`http://10.10.0.1/configs/user-data\` (machine config)
+          - \`http://10.10.0.1/configs/network-config\` (optional)
+
+          ## Boot Sequence
+
+          The default boot order:
+          1. Attempt USB disk boot (EFI)
+          2. Attempt network boot via DHCP/PXE
+          3. Fall back to local disk
+
+          ## Verification
+
+          Verify the image integrity:
+
+          \`\`\`bash
+          sha256sum -c ${{ steps.create_image.outputs.image_name }}.xz.sha256
+          \`\`\`
+
+          ## Image Information
+
+          - **Uncompressed Size**: ${{ steps.create_image.outputs.image_size }} bytes
+          - **Format**: Raw disk image (MBR partition table, FAT32 boot partition)
+
+          ---
+
+          *Built on $(date -u +"%Y-%m-%d %H:%M:%S UTC")*
+          EOF
+
+          cat release_notes.md
+
+      - name: Upload final artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpi4-uboot-image
+          path: |
+            out/${{ steps.create_image.outputs.image_name }}.xz
+            out/${{ steps.create_image.outputs.image_name }}.xz.sha256
+            out/${{ steps.create_iso.outputs.iso_name }}
+            out/${{ steps.create_iso.outputs.iso_name }}.sha256
+            out/release_notes.md
+          retention-days: 30
+
+      - name: Report build status
+        env:
+          RELEASE_VERSION: ${{ needs.determine-version.outputs.release_version }}
+        run: |
+          echo "✅ U-Boot SD card image created successfully"
+          echo "📦 SD Image: ${{ steps.create_image.outputs.image_name }}.xz"
+          echo "📏 SD Uncompressed size: ${{ steps.create_image.outputs.image_size }} bytes"
+          echo "📦 ISO Image: ${{ steps.create_iso.outputs.iso_name }}"
+          echo "📏 ISO Uncompressed size: ${{ steps.create_iso.outputs.iso_size }} bytes"
+          echo "🔖 U-Boot version: ${{ env.UBOOT_VERSION }}"
+          echo "🔖 Release version: ${RELEASE_VERSION}"
+          echo "🔖 Firmware version: ${{ env.RPI_FIRMWARE_VERSION }}"
+
+  publish-github-release:
+    name: Publish GitHub Release
+    needs: build-image
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/u-boot-v')) || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: rpi4-uboot-image
+          path: artifacts
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: u-boot-v${{ needs.build-image.outputs.release_version }}
+          name: Release u-boot-v${{ needs.build-image.outputs.release_version }}
+          body_path: artifacts/release_notes.md
+          files: |
+            artifacts/${{ needs.build-image.outputs.image_name }}.xz
+            artifacts/${{ needs.build-image.outputs.image_name }}.xz.sha256
+            artifacts/${{ needs.build-image.outputs.iso_name }}
+            artifacts/${{ needs.build-image.outputs.iso_name }}.sha256
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
