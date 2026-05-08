@@ -100,12 +100,12 @@ jobs:
         run: |
           patch -p1 < ${{ github.workspace }}/src/u-boot/patches/rpi_arm64_defconfig.patch
 
-          make rpi_arm64_defconfig LOCALVERSION_AUTO=n
+          make LOCALVERSION_AUTO=n LOCALVERSION= rpi_arm64_defconfig
 
       - name: Build U-Boot
         working-directory: u-boot
         run: |
-          make -j $(nproc) HOSTLDLIBS_mkimage="-lssl -lcrypto" LOCALVERSION_AUTO=n
+          make LOCALVERSION_AUTO=n LOCALVERSION= -j $(nproc) HOSTLDLIBS_mkimage="-lssl -lcrypto"
           ls -la u-boot.bin
 
       - name: Upload U-Boot binary
