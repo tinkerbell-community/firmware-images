@@ -1,3 +1,3 @@
-uboot v2026.07-rc1
+uboot v2026.04
 firmware master
-kernel c0d886e4af574740bcffafda40ae692918ca87f9
+kernel rpi-6.18.y
