@@ -4,7 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       source_version:
-        description: "LicheeSG-Nano-Build release version (e.g. v2.3.6-1)"
+        description: "LicheeSG-Nano-Build release version"
+        required: false
+        type: string
+      app_version:
+        description: "NanoKVM release version"
         required: false
         type: string
   push:
@@ -14,8 +18,8 @@ on:
       - 'nanokvm/**'
 
 env:
-  SOURCE_VERSION: ${{ inputs.source_version || 'v2.3.6-1' }}
-  IMAGE_URL: "https://github.com/scpcom/LicheeSG-Nano-Build/releases/download/${{ inputs.source_version || 'v2.3.6-1' }}/licheervnano-kvm_sd.img.xz"
+  SOURCE_VERSION: ${{ inputs.source_version || 'v2.4.0-25' }}
+  APP_VERSION: ${{ inputs.app_version || 'v2.3.12' }}
 
 jobs:
   build-image:
@@ -53,8 +57,7 @@ jobs:
       - name: Download base image
         run: |
           mkdir -p out
-          echo "Downloading ${{ env.IMAGE_URL }}..."
-          curl -fSL -o out/licheervnano-kvm_sd.img.xz "${{ env.IMAGE_URL }}"
+          curl -fSL -o out/licheervnano-kvm_sd.img.xz "https://github.com/scpcom/LicheeSG-Nano-Build/releases/download/${{ env.SOURCE_VERSION }}/licheervnano-kvm_sd.img.xz"
 
       - name: Decompress image
         run: |
@@ -97,8 +100,12 @@ jobs:
 
           echo "Applying overlay files from ${OVERLAY_DIR}..."
           sudo cp -av "${OVERLAY_DIR}/." "${MOUNT_DIR}/"
-          sudo chmod 755 "${MOUNT_DIR}/etc/init.d/S99ipmi_sim"
-          sudo chmod 755 "${MOUNT_DIR}/etc/ipmi/ipmi_sim_chassiscontrol"
+
+          sudo rm -rf "${MOUNT_DIR}/kvmapp"
+          sudo mkdir -p "${MOUNT_DIR}/kvmapp"
+          curl -sfL https://github.com/BMCPi/NanoKVM/releases/download/${{ env.APP_VERSION }}/NanoKVM_${{ env.APP_VERSION }}.tar.gz | sudo tar -xz --strip-components=1 -C "${MOUNT_DIR}/kvmapp/"
+
+          sudo cp -av "${OVERLAY_DIR}/kvmapp/system/." "${MOUNT_DIR}/"
 
           sudo umount "${MOUNT_DIR}"
           LOOP_DEV_TMP="${LOOP_DEV}"
