@@ -134,7 +134,7 @@ jobs:
             firmware/boot/*.elf
             firmware/boot/*.dat
             firmware/boot/*.bin
-            firmware/overlays/*.dtbo
+            firmware/boot/overlays
           retention-days: 1
           if-no-files-found: error
 
