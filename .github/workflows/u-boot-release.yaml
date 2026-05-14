@@ -382,7 +382,7 @@ jobs:
           - **U-Boot Version**: \`${{ needs.determine-version.outputs.uboot }}\`
           - **Release Version**: \`${release}\`
           - **Raspberry Pi Firmware**: \`${{ needs.determine-version.outputs.firmware }}\`
-          - **Talos Kernel**: \`${{ needs.determine-version.outputs.talos_kernel }}\`
+          - **Raspberry Pi Kernel**: \`${{ needs.determine-version.outputs.kernel }}\`
           - **Architecture**: ARM64 (aarch64)
           - **Target Device**: Raspberry Pi 4 / Raspberry Pi 400
 
