@@ -1,5 +1,5 @@
 diff --git a/arch/arm/dts/Makefile b/arch/arm/dts/Makefile
-index 82ad3035308..5d97c94cbec 100644
+index 82ad3035308..6327028f330 100644
 --- a/arch/arm/dts/Makefile
 +++ b/arch/arm/dts/Makefile
 @@ -1025,7 +1025,9 @@ dtb-$(CONFIG_ARCH_BCM283X) += \
@@ -9,7 +9,7 @@ index 82ad3035308..5d97c94cbec 100644
 -	bcm2711-rpi-4-b.dtb
 +	bcm2711-rpi-4-b.dtb \
 +	bcm2712-rpi-5-b.dtb \
-+	bcm2712d0-rpi-5-b.dtb
++	bcm2712-d-rpi-5-b.dtb
  
  dtb-$(CONFIG_TARGET_BCMNS) += ns-board.dtb
  
@@ -385,7 +385,7 @@ index 1dc7ce50d1d..3532a980b75 100644
  
  void __efi_runtime EFIAPI efi_reset_system(
 diff --git a/board/raspberrypi/rpi/rpi.c b/board/raspberrypi/rpi/rpi.c
-index b0a1484c0fa..d79492ec9e7 100644
+index b0a1484c0fa..27d21980c1e 100644
 --- a/board/raspberrypi/rpi/rpi.c
 +++ b/board/raspberrypi/rpi/rpi.c
 @@ -3,33 +3,41 @@
@@ -469,7 +469,7 @@ index b0a1484c0fa..d79492ec9e7 100644
  {
  	/* Using dtb from firmware directly; leave it alone */
  	if (fdt == fw_fdt)
-@@ -629,12 +641,236 @@ void  update_fdt_from_fw(void *fdt, void *fw_fdt)
+@@ -629,12 +641,79 @@ void  update_fdt_from_fw(void *fdt, void *fw_fdt)
  	copy_property(fdt, fw_fdt, "ethernet0/mdio@e14/ethernet-phy@1", "reg");
  
  	/* Bluetooth device address as provided by the firmware */
@@ -545,185 +545,23 @@ index b0a1484c0fa..d79492ec9e7 100644
 +	}
 +}
 +
-+/*
-+ * BCM2712 MIP (MSI-X Interrupt Pages) controller normalization.
-+ *
-+ * The RP1 south bridge driver (rp1_pci) requires real MSI-X — it asks
-+ * for 61 MSI-X vectors via pci_alloc_irq_vectors(... PCI_IRQ_MSIX).
-+ * On BCM2712 those vectors are provided by the MIP irqchip, not by
-+ * the brcmstb-pcie internal MSI controller (which can only host 32
-+ * shared MSI sources).  Without a functional MIP MSI-X parent for
-+ * pcie2, the call fails with -ENOTSUPP and the RP1 probe aborts:
-+ *
-+ *   rp1_pci 0002:01:00.0: error -ENOTSUPP: Failed to allocate MSI-X vectors
-+ *   rp1_pci 0002:01:00.0: probe with driver rp1_pci failed with error -524
-+ *
-+ * Two firmware DTB shapes are observed in the wild:
-+ *   - Pi downstream:  compatible = "brcm,bcm2712-mip-intc"
-+ *   - mainline:       compatible = "brcm,bcm2712-mip"
-+ *
-+ * Mainline kernels (Talos 6.12+) only bind the irqchip driver
-+ * `irq-bcm2712-mip` against "brcm,bcm2712-mip", so the downstream
-+ * spelling silently leaves the controller unprobed.  Some firmware
-+ * DTBs additionally ship the MIP nodes with status = "disabled" and
-+ * omit the `msi-ranges` property (present in mainline DTS) that the
-+ * driver uses to find its GIC SPI base and vector count.
-+ *
-+ * Normalize both shapes so the mainline driver probes correctly:
-+ *   1. Rewrite any compatible string starting with "brcm,bcm2712-mip"
-+ *      to exactly "brcm,bcm2712-mip" (drops the "-intc" suffix).
-+ *   2. Force status = "okay" on those nodes.
-+ *   3. Ensure #msi-cells = <0> is present (required by msi-parent
-+ *      consumers on the PCIe node).
-+ *   4. Synthesize msi-ranges when absent, using the fixed SPI
-+ *      assignments from the mainline bcm2712.dtsi:
-+ *        MIP0 @ 0x1000130000: GIC SPI 128, 64 vectors, offset 0
-+ *        MIP1 @ 0x1000131000: GIC SPI 247,  8 vectors, offset 8
-+ *   5. Set brcm,msi-offset when absent (needed for MIP1).
-+ *
-+ * Note: this fixup is necessary but not sufficient on its own.  The
-+ * kernel driver (irq-bcm2712-mip.c) must be built-in (CONFIG_BCM2712_MIP=y)
-+ * rather than a module so it is available when the PCIe bus probes.
-+ */
-+static void rpi5_fixup_mip_msi(void *blob)
-+{
-+	int gic_offset;
-+	uint32_t gic_phandle = 0;
-+	int offset;
-+	int depth = 0;
-+
-+	/*
-+	 * Locate the GIC-400 node to obtain its phandle for msi-ranges.
-+	 * The firmware DTB may use either the canonical "arm,gic-400" or
-+	 * the older alias "arm,cortex-a15-gic" for the same controller.
-+	 */
-+	gic_offset = fdt_node_offset_by_compatible(blob, -1, "arm,gic-400");
-+	if (gic_offset < 0)
-+		gic_offset = fdt_node_offset_by_compatible(
-+			blob, -1, "arm,cortex-a15-gic");
-+	if (gic_offset >= 0)
-+		gic_phandle = fdt_get_phandle(blob, gic_offset);
-+
-+	for (offset = fdt_next_node(blob, -1, &depth); offset >= 0;
-+	     offset = fdt_next_node(blob, offset, &depth)) {
-+		const char *compat;
-+		int len;
-+
-+		compat = fdt_getprop(blob, offset, "compatible", &len);
-+		if (!compat || len <= 0)
-+			continue;
-+
-+		/*
-+		 * `compatible` may hold multiple NUL-terminated strings;
-+		 * walk them and match any beginning with the MIP prefix.
-+		 */
-+		const char *p = compat;
-+		const char *end = compat + len;
-+		bool matched = false;
-+
-+		while (p < end) {
-+			size_t plen = strnlen(p, end - p);
-+
-+			if (plen >= strlen("brcm,bcm2712-mip") &&
-+			    strncmp(p, "brcm,bcm2712-mip",
-+				    strlen("brcm,bcm2712-mip")) == 0) {
-+				matched = true;
-+				break;
-+			}
-+			p += plen + 1;
-+		}
-+
-+		if (!matched)
-+			continue;
-+
-+		/* 1 & 2: canonical compatible + enabled */
-+		fdt_setprop_string(blob, offset, "compatible",
-+				   "brcm,bcm2712-mip");
-+		fdt_setprop_string(blob, offset, "status", "okay");
-+
-+		/* 3: #msi-cells required by msi-parent phandle consumers */
-+		if (!fdt_getprop(blob, offset, "#msi-cells", NULL))
-+			fdt_setprop_u32(blob, offset, "#msi-cells", 0);
-+
-+		/* 4 & 5: synthesize msi-ranges + brcm,msi-offset if absent */
-+		if (fdt_getprop(blob, offset, "msi-ranges", NULL))
-+			continue;
-+
-+		if (!gic_phandle) {
-+			printf("RPI: MIP fixup: GIC phandle not found, skipping msi-ranges\n");
-+			continue;
-+		}
-+
-+		/*
-+		 * Determine which MIP instance this is from the low 32 bits
-+		 * of the 2-cell reg base address (hi=0x10 for both).
-+		 */
-+		const fdt32_t *reg = fdt_getprop(blob, offset, "reg", &len);
-+		uint32_t irq_base, num_msis, msi_offset_val;
-+
-+		if (!reg || len < 2 * (int)sizeof(fdt32_t))
-+			continue;
-+
-+		switch (fdt32_to_cpu(reg[1])) {
-+		case 0x00130000: /* MIP0 */
-+			irq_base = 128;
-+			num_msis = 64;
-+			msi_offset_val = 0;
-+			break;
-+		case 0x00131000: /* MIP1 */
-+			irq_base = 247;
-+			num_msis = 8;
-+			msi_offset_val = 8;
-+			break;
-+		default:
-+			printf("RPI: MIP fixup: unrecognised reg_lo=0x%x\n",
-+			       fdt32_to_cpu(reg[1]));
-+			continue;
-+		}
-+
-+		/*
-+		 * msi-ranges = <&gicv2 GIC_SPI <base> IRQ_TYPE_EDGE_RISING <count>>
-+		 *
-+		 * GIC #interrupt-cells = 3, so the property holds 5 cells:
-+		 *   [gic_phandle][0 (GIC_SPI)][irq_base][1 (EDGE_RISING)][count]
-+		 */
-+		fdt32_t cells[5] = {
-+			cpu_to_fdt32(gic_phandle),
-+			cpu_to_fdt32(0), /* GIC_SPI */
-+			cpu_to_fdt32(irq_base),
-+			cpu_to_fdt32(1), /* IRQ_TYPE_EDGE_RISING */
-+			cpu_to_fdt32(num_msis),
-+		};
-+
-+		fdt_setprop(blob, offset, "msi-ranges", cells, sizeof(cells));
-+
-+		if (!fdt_getprop(blob, offset, "brcm,msi-offset", NULL))
-+			fdt_setprop_u32(blob, offset, "brcm,msi-offset",
-+					msi_offset_val);
-+	}
-+}
 +#endif /* CONFIG_BCM2712 */
 +
  int ft_board_setup(void *blob, struct bd_info *bd)
  {
  	int node;
-@@ -644,8 +880,14 @@ int ft_board_setup(void *blob, struct bd_info *bd)
+@@ -644,6 +723,10 @@ int ft_board_setup(void *blob, struct bd_info *bd)
  	else
  		update_fdt_from_fw(blob, (void *)gd->fdt_blob);
  
 +#ifdef CONFIG_BCM2712
 +	rpi5_strip_pinctrl_consumers(blob);
-+	rpi5_fixup_mip_msi(blob);
 +#endif
 +
  	if (CONFIG_IS_ENABLED(FDT_SIMPLEFB)) {
--		node = fdt_node_offset_by_compatible(blob, -1, "simple-framebuffer");
-+		node = fdt_node_offset_by_compatible(blob, -1,
-+						     "simple-framebuffer");
+ 		node = fdt_node_offset_by_compatible(blob, -1, "simple-framebuffer");
  		if (node < 0)
- 			fdt_simplefb_add_node(blob);
- 		else
-@@ -661,11 +903,337 @@ int ft_board_setup(void *blob, struct bd_info *bd)
+@@ -661,11 +744,337 @@ int ft_board_setup(void *blob, struct bd_info *bd)
  	return 0;
  }
  
@@ -1063,7 +901,7 @@ index b0a1484c0fa..d79492ec9e7 100644
  }
  
  static bool is_rpi3(void)
-@@ -681,39 +1249,47 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -681,39 +1090,47 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	struct {
  		const char *fdt_compatible;
  		const char *acpi_scope;
@@ -1130,7 +968,7 @@ index b0a1484c0fa..d79492ec9e7 100644
  				if (ret) {
  					node = -FDT_ERR_NOTFOUND;
  					break;
-@@ -722,11 +1298,15 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -722,11 +1139,15 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  				if (r.start == map[i].mmio_address)
  					break;
  
@@ -1149,7 +987,7 @@ index b0a1484c0fa..d79492ec9e7 100644
  		}
  		acpigen_write_scope(ctx, map[i].acpi_scope);
  		acpigen_write_name_integer(ctx, "_STA", enabled ? 0xf : 0);
-@@ -734,34 +1314,38 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -734,34 +1155,38 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	}
  
  	/* GPIO quirks */
@@ -1196,7 +1034,7 @@ index b0a1484c0fa..d79492ec9e7 100644
  				acpigen_emit_namestring(ctx, "\\_SB.GDV1.DMTR");
  			acpigen_pop_len(ctx);
  		}
-@@ -771,15 +1355,13 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -771,15 +1196,13 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	uart_in_use = ~0;
  	mini_clock_rate = 0x1000000;
  
@@ -1216,7 +1054,7 @@ index b0a1484c0fa..d79492ec9e7 100644
  	if (!ret) {
  		if (uart_in_use == 0)
  			log_err("Invalid config: PL011 and MiniUART are both enabled.");
-@@ -802,7 +1384,8 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -802,7 +1225,8 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	return 0;
  }
  
