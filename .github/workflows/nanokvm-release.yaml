@@ -104,7 +104,7 @@ jobs:
           sudo rm -rf "${MOUNT_DIR}/kvmapp"
           sudo mkdir -p "${MOUNT_DIR}/kvmapp"
           export APP_VERSION="${{ env.APP_VERSION }}"
-          curl -sfLO https://github.com/BMCPi/NanoKVM/releases/download/${APP_VERSION}/NanoKVM_${APP_VERSION#v}.tar.gz | sudo tar -xz --strip-components=1 -C "${MOUNT_DIR}/kvmapp/"
+          curl -sfL https://github.com/BMCPi/NanoKVM/releases/download/${APP_VERSION}/NanoKVM_${APP_VERSION#v}.tar.gz | sudo tar -xz --strip-components=1 -C "${MOUNT_DIR}/kvmapp/"
 
           sudo cp -av "${OVERLAY_DIR}/kvmapp/system/." "${MOUNT_DIR}/"
 
