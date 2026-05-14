@@ -15,10 +15,10 @@ index 82ad3035308..6327028f330 100644
  
 diff --git a/arch/arm/dts/bcm2712-rpi-5-b-u-boot.dtsi b/arch/arm/dts/bcm2712-rpi-5-b-u-boot.dtsi
 new file mode 100644
-index 00000000000..24d4f30ca12
+index 00000000000..c746d5f7e5c
 --- /dev/null
 +++ b/arch/arm/dts/bcm2712-rpi-5-b-u-boot.dtsi
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,139 @@
 +/*
 + * PCIe DMA Override
 + *
@@ -93,7 +93,36 @@ index 00000000000..24d4f30ca12
 +	bootph-all;
 +};
 +
++/*
++ * Bootloader config (blconfig) NVMEM node.
++ *
++ * The VPU firmware copies the board's bootloader configuration block into
++ * DRAM and patches this node's reg property with the placement at runtime.
++ * U-Boot's rpi board code reads it via the nvmem API to detect things like
++ * POWER_OFF_ON_HALT for the power-button service. The "raspberrypi,bootloader-
++ * config" / "nvmem-rmem" compatible matches the same handling used on RPi 4
++ * (see bcm2711-rpi.dtsi).
++ *
++ * status starts as "disabled" and is flipped to "okay" by the firmware after
++ * it writes the real reg values; an alias makes it discoverable by label.
++ */
++&rmem {
++	blconfig: nvram@0 {
++		compatible = "raspberrypi,bootloader-config", "nvmem-rmem";
++		#address-cells = <1>;
++		#size-cells = <1>;
++		reg = <0x0 0x0 0x0>;
++		no-map;
++		status = "disabled";
++		bootph-all;
++	};
++};
++
 +/ {
++	aliases {
++		blconfig = &blconfig;
++	};
++
 +	smbios {
 +		compatible = "u-boot,sysinfo-smbios";
 +
