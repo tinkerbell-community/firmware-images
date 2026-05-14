@@ -76,15 +76,7 @@ jobs:
           path: src
           ref: ${{ github.ref }}
 
-      - name: Cache u-boot source
-        id: cache-uboot-src
-        uses: actions/cache@v4
-        with:
-          path: u-boot
-          key: uboot-src-${{ needs.determine-version.outputs.uboot }}
-
       - name: Checkout u-boot
-        if: steps.cache-uboot-src.outputs.cache-hit != 'true'
         uses: actions/checkout@v4
         with:
           repository: u-boot/u-boot
