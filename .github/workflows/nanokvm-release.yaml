@@ -106,7 +106,7 @@ jobs:
           NANOKVM_APP_VER="${{ env.APP_VERSION }}"
           NANOKVM_TGZ="$(mktemp /tmp/nanokvm.XXXXXX.tar.gz)"
           curl -fL "https://github.com/BMCPi/NanoKVM/releases/download/${NANOKVM_APP_VER}/NanoKVM_${NANOKVM_APP_VER#v}.tar.gz" -o "${NANOKVM_TGZ}"
-          sudo tar -xzf "${NANOKVM_TGZ}" --strip-components=1 -C "${MOUNT_DIR}/kvmapp/"
+          sudo tar -xzf "${NANOKVM_TGZ}" -C "${MOUNT_DIR}/kvmapp/"
           rm -f "${NANOKVM_TGZ}"
 
           sudo cp -av "${OVERLAY_DIR}/kvmapp/system/." "${MOUNT_DIR}/"
