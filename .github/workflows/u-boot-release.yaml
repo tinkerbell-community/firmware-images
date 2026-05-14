@@ -12,7 +12,7 @@ on:
         required: false
         type: string
       kernel:
-        description: "Raspberry Pi kernel version tag for building device tree files"
+        description: "Talos kernel OCI image version tag (e.g. v1.10.0)"
         required: false
         type: string
   push:
@@ -26,7 +26,7 @@ jobs:
       release: ${{ steps.version.outputs.release }}
       uboot: ${{ steps.version.outputs.uboot }}
       firmware: ${{ steps.version.outputs.firmware }}
-      kernel: ${{ steps.version.outputs.kernel }}
+      talos_kernel: ${{ steps.version.outputs.talos_kernel }}
 
     steps:
       - name: Checkout repository
@@ -51,8 +51,8 @@ jobs:
           firmware="${{ inputs.firmware }}"
           firmware="${firmware:-$FILE_FIRMWARE_VER}"
 
-          kernel="${{ inputs.kernel }}"
-          kernel="${kernel:-$FILE_KERNEL_VER}"
+          talos_kernel="${{ inputs.kernel }}"
+          talos_kernel="${talos_kernel:-$FILE_TALOS_KERNEL_VER}"
 
           release="u-boot-${uboot}"
 
@@ -76,7 +76,15 @@ jobs:
           path: src
           ref: ${{ github.ref }}
 
+      - name: Cache u-boot source
+        id: cache-uboot-src
+        uses: actions/cache@v4
+        with:
+          path: u-boot
+          key: uboot-src-${{ needs.determine-version.outputs.uboot }}
+
       - name: Checkout u-boot
+        if: steps.cache-uboot-src.outputs.cache-hit != 'true'
         uses: actions/checkout@v4
         with:
           repository: u-boot/u-boot
@@ -118,7 +126,15 @@ jobs:
       contents: read
 
     steps:
+      - name: Cache Raspberry Pi firmware
+        id: cache-rpi-firmware
+        uses: actions/cache@v4
+        with:
+          path: firmware
+          key: rpi-firmware-${{ needs.determine-version.outputs.firmware }}
+
       - name: Checkout Raspberry Pi firmware
+        if: steps.cache-rpi-firmware.outputs.cache-hit != 'true'
         uses: actions/checkout@v4
         with:
           repository: raspberrypi/firmware
@@ -159,11 +175,12 @@ jobs:
           overwrite: true
           if-no-files-found: error
 
-  build-kernel-dtbs:
+  extract-kernel-dtbs:
     needs: determine-version
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
+      packages: read
 
     steps:
       - name: Checkout repository
@@ -172,71 +189,54 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           path: src
 
-      - name: Cache and install build dependencies
+      - name: Setup crane
+        uses: imjasonh/setup-crane@v0.5
+
+      - name: Install build dependencies
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: build-essential cpp device-tree-compiler
+          packages: device-tree-compiler
           version: 1.0
 
-      - name: Checkout rpi kernel
-        uses: actions/checkout@v4
+      - name: Cache kernel DTBs
+        id: cache-kernel-dtbs
+        uses: actions/cache@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          repository: raspberrypi/linux
-          fetch-depth: 1
-          path: firmware
-          ref: ${{ needs.determine-version.outputs.kernel }}
+          path: out
+          key: talos-dtbs-${{ needs.determine-version.outputs.talos_kernel }}
 
-      - name: Download and patch Raspberry Pi kernel source
-        working-directory: firmware
+      - name: Extract DTBs from Talos kernel OCI image
+        if: steps.cache-kernel-dtbs.outputs.cache-hit != 'true'
         run: |
-          for patch in $(find ${{ github.workspace }}/src/u-boot/patches/dtb -type f -name '*.patch' | sort); do
-            echo "Applying patch $patch"
-            patch -p1 < "$patch" || (echo "Failed to apply patch $patch" && exit 1)
-          done
+          mkdir -p out/overlays
 
-          # Copy custom overlay DTS files into the kernel source tree
-          mkdir -p arch/arm/boot/dts/overlays/
-          cp -av ${{ github.workspace }}/src/u-boot/patches/dtb/overlays/* arch/arm/boot/dts/overlays/
+          echo "Extracting DTBs from ghcr.io/siderolabs/kernel:${{ needs.determine-version.outputs.talos_kernel }}..."
+          crane export --platform linux/arm64 \
+            ghcr.io/siderolabs/kernel:${{ needs.determine-version.outputs.talos_kernel }} \
+            /tmp/talos-kernel.tar
 
-      - name: Build device tree binaries
-        working-directory: firmware
-        run: |
-          mkdir -p out out/overlays
+          tar -xf /tmp/talos-kernel.tar --strip-components=2 -C out/ \
+            $(tar -tf /tmp/talos-kernel.tar | grep -E '^dtb/broadcom/bcm27[^/]+\.dtb$')
+          rm /tmp/talos-kernel.tar
 
-          export DTC_FLAGS="-R 4 -p 0x1000 -@ -H epapr"
-          for dts in arch/arm64/boot/dts/broadcom/bcm27*.dts; do
-            target=$(basename "${dts%*.dts}")
-            echo "Building $target.dtb"
-            cpp -nostdinc -I include -I arch -undef -x assembler-with-cpp \
-              -I scripts/dtc/include-prefixes/ -D__DTS__ -DFIRMWARE_UPDATED \
-              -P "$dts" -o "out/$target.dts"
-            dtc -O dtb $DTC_FLAGS -o "out/$target.dtb" "out/$target.dts"
-          done
-
-          echo "Built device tree files:"
+          echo "Extracted device tree files:"
           ls -lah out/*.dtb
 
-          if [ -z "$(ls out/bcm2712*.dtb 2>/dev/null)" ]; then
-            echo "ERROR: No bcm2712* device tree files built"
+          if [ -z "$(ls out/bcm2711*.dtb 2>/dev/null)" ]; then
+            echo "ERROR: No bcm2711* device tree files extracted"
             exit 1
           fi
 
+      - name: Build custom overlay device trees
+        if: steps.cache-kernel-dtbs.outputs.cache-hit != 'true'
+        run: |
           export DTC_FLAGS="-R 0 -p 0 -@ -H epapr"
-          for dts in arch/arm/boot/dts/overlays/*.dts; do
+          for dts in src/u-boot/patches/dtb/overlays/*.dts; do
             # disable-v3d-overlay.dts -> disable-v3d
-            target=$(basename "${dts%*.dts}")
-            target="${target%-overlay}"
+            target=$(basename "${dts%*-overlay.dts}")
             echo "Building $target.dtbo"
-            cpp -nostdinc -I include -I arch -undef -x assembler-with-cpp \
-              -I scripts/dtc/include-prefixes/ -D__DTS__ -DFIRMWARE_UPDATED \
-              -P "$dts" -o "out/overlays/$target.dts"
-            dtc -O dtb $DTC_FLAGS -o "out/overlays/$target.dtbo" "out/overlays/$target.dts"
+            dtc -O dtb $DTC_FLAGS -o "out/overlays/$target.dtbo" "$dts"
           done
-
-          # Match the names firmware wants
-          [ -f out/overlays/hat_map.dtbo ] && mv out/overlays/hat_map.dtbo out/overlays/hat_map.dtb
-          [ -f out/overlays/overlay_map.dtbo ] && mv out/overlays/overlay_map.dtbo out/overlays/overlay_map.dtb
 
           echo "Built overlay files:"
           ls -lah out/overlays/
@@ -246,13 +246,13 @@ jobs:
         with:
           name: kernel-dts
           path: |
-            firmware/out/*.dtb
-            firmware/out/overlays/
+            out/*.dtb
+            out/overlays/
           retention-days: 1
           if-no-files-found: error
 
   build-image:
-    needs: [determine-version, build-uboot, checkout-firmware, prepare-config, build-kernel-dtbs]
+    needs: [determine-version, build-uboot, checkout-firmware, prepare-config, extract-kernel-dtbs]
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: write
@@ -382,7 +382,7 @@ jobs:
           - **U-Boot Version**: \`${{ needs.determine-version.outputs.uboot }}\`
           - **Release Version**: \`${release}\`
           - **Raspberry Pi Firmware**: \`${{ needs.determine-version.outputs.firmware }}\`
-          - **Raspberry Pi Kernel**: \`${{ needs.determine-version.outputs.kernel }}\`
+          - **Talos Kernel**: \`${{ needs.determine-version.outputs.talos_kernel }}\`
           - **Architecture**: ARM64 (aarch64)
           - **Target Device**: Raspberry Pi 4 / Raspberry Pi 400
 
