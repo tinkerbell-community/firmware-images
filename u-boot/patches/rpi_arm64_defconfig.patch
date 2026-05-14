@@ -376,7 +376,7 @@ index 1dc7ce50d1d..3532a980b75 100644
  
  void __efi_runtime EFIAPI efi_reset_system(
 diff --git a/board/raspberrypi/rpi/rpi.c b/board/raspberrypi/rpi/rpi.c
-index b0a1484c0fa..d79492ec9e7 100644
+index b0a1484c0fa..f50529e13e2 100644
 --- a/board/raspberrypi/rpi/rpi.c
 +++ b/board/raspberrypi/rpi/rpi.c
 @@ -3,33 +3,41 @@
@@ -460,9 +460,13 @@ index b0a1484c0fa..d79492ec9e7 100644
  {
  	/* Using dtb from firmware directly; leave it alone */
  	if (fdt == fw_fdt)
-@@ -629,12 +641,236 @@ void  update_fdt_from_fw(void *fdt, void *fw_fdt)
+@@ -628,13 +640,240 @@ void  update_fdt_from_fw(void *fdt, void *fw_fdt)
+ 	/* address of the PHY device as provided by the firmware  */
  	copy_property(fdt, fw_fdt, "ethernet0/mdio@e14/ethernet-phy@1", "reg");
  
++	/* address of the PHY device as provided by the firmware  */
++	copy_property(fdt, fw_fdt, "ethernet0/mdio/ethernet-phy@1", "reg");
++
  	/* Bluetooth device address as provided by the firmware */
 -	copy_property(fdt, fw_fdt, "/soc/serial@7e201000/bluetooth", "local-bd-address");
 +	copy_property(fdt, fw_fdt, "/soc/serial@7e201000/bluetooth",
@@ -698,7 +702,7 @@ index b0a1484c0fa..d79492ec9e7 100644
  int ft_board_setup(void *blob, struct bd_info *bd)
  {
  	int node;
-@@ -644,8 +880,14 @@ int ft_board_setup(void *blob, struct bd_info *bd)
+@@ -644,8 +883,14 @@ int ft_board_setup(void *blob, struct bd_info *bd)
  	else
  		update_fdt_from_fw(blob, (void *)gd->fdt_blob);
  
@@ -714,7 +718,7 @@ index b0a1484c0fa..d79492ec9e7 100644
  		if (node < 0)
  			fdt_simplefb_add_node(blob);
  		else
-@@ -661,11 +903,337 @@ int ft_board_setup(void *blob, struct bd_info *bd)
+@@ -661,11 +906,337 @@ int ft_board_setup(void *blob, struct bd_info *bd)
  	return 0;
  }
  
@@ -1054,7 +1058,7 @@ index b0a1484c0fa..d79492ec9e7 100644
  }
  
  static bool is_rpi3(void)
-@@ -681,39 +1249,47 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -681,39 +1252,47 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	struct {
  		const char *fdt_compatible;
  		const char *acpi_scope;
@@ -1121,7 +1125,7 @@ index b0a1484c0fa..d79492ec9e7 100644
  				if (ret) {
  					node = -FDT_ERR_NOTFOUND;
  					break;
-@@ -722,11 +1298,15 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -722,11 +1301,15 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  				if (r.start == map[i].mmio_address)
  					break;
  
@@ -1140,7 +1144,7 @@ index b0a1484c0fa..d79492ec9e7 100644
  		}
  		acpigen_write_scope(ctx, map[i].acpi_scope);
  		acpigen_write_name_integer(ctx, "_STA", enabled ? 0xf : 0);
-@@ -734,34 +1314,38 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -734,34 +1317,38 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	}
  
  	/* GPIO quirks */
@@ -1187,7 +1191,7 @@ index b0a1484c0fa..d79492ec9e7 100644
  				acpigen_emit_namestring(ctx, "\\_SB.GDV1.DMTR");
  			acpigen_pop_len(ctx);
  		}
-@@ -771,15 +1355,13 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -771,15 +1358,13 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	uart_in_use = ~0;
  	mini_clock_rate = 0x1000000;
  
@@ -1207,7 +1211,7 @@ index b0a1484c0fa..d79492ec9e7 100644
  	if (!ret) {
  		if (uart_in_use == 0)
  			log_err("Invalid config: PL011 and MiniUART are both enabled.");
-@@ -802,7 +1384,8 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -802,7 +1387,8 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	return 0;
  }
  

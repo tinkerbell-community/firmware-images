@@ -127,7 +127,8 @@ index 6fa5979..6d6c5e6 100644
  		bcm2835;
  		bcm2711;
 @@ -53,6 +63,15 @@
- 		bcm2712;
+ 	dwc-otg {
+ 		renamed = "dwc-otg-deprecated";
  	};
  
 +	enable-bt {
