@@ -1,60 +1,47 @@
-From 7f5e8c9d3e1b4a2f9c8d7e6f5a4b3c2d1e0f9a8b Mon Sep 17 00:00:00 2001
+From 3e9ad87d2a3f4d2a09fe8f9a6df4ad51fef8e95d Mon Sep 17 00:00:00 2001
 From: Tinkerbell Community <tinkerbell@community.io>
 Date: Wed, 14 May 2026 10:00:00 +0000
-Subject: [PATCH] dts: pcie2: Disable MSI to force legacy interrupt mode on rpi-6.18.y
+Subject: [PATCH] dts: bcm2712: Reassert pcie2 MSI domain wiring for RP1
 
-The rpi-6.18.y kernel does not have complete MSI-X support for the BCM2712
-PCIe2 controller. When the rp1_pci driver attempts MSI-X allocation on
-devices behind this port, it fails with:
+Talos can fail probing rp1_pci with:
   error -ENOTSUPP: Failed to allocate MSI-X vectors
 
-This patch removes the MSI capability advertisement from the PCIe2 root port
-configuration, forcing all attached devices to use legacy interrupt routing
-instead of MSI/MSI-X.
+That failure happens when the pcie2 host does not expose a usable MSI domain
+at runtime. Reassert the pcie2 MSI properties in board-level DTS files so the
+final merged tree always advertises the MSI interrupt and parent domain.
 
-The msi-map property (which advertises MSI availability) is removed from
-both the pcie2 controller and rp1 endpoint, ensuring the kernel knows MSI
-is not available for this bus.
+This keeps RP1 on MSI/MSI-X and avoids deferred-probe cascades from a failed
+rp1_pci bind.
 
 Signed-off-by: Tinkerbell Community <tinkerbell@community.io>
 ---
- arch/arm64/boot/dts/broadcom/bcm2712-rpi-5-b.dts  | 4 ++++
- arch/arm64/boot/dts/broadcom/bcm2712-rpi-cm5.dtsi | 4 ++++
- 2 files changed, 8 insertions(+)
+ arch/arm64/boot/dts/broadcom/bcm2712-rpi-5-b.dts  | 3 +++
+ arch/arm64/boot/dts/broadcom/bcm2712-rpi-cm5.dtsi | 3 +++
+ 2 files changed, 6 insertions(+)
 
 diff --git a/arch/arm64/boot/dts/broadcom/bcm2712-rpi-5-b.dts b/arch/arm64/boot/dts/broadcom/bcm2712-rpi-5-b.dts
 index 2939214..a2c3450 100644
 --- a/arch/arm64/boot/dts/broadcom/bcm2712-rpi-5-b.dts
 +++ b/arch/arm64/boot/dts/broadcom/bcm2712-rpi-5-b.dts
-@@ -148,6 +148,10 @@ rp1_target: &pcie2 {
- 	};
+@@ -354,6 +354,9 @@
+ &pcie2 {
++	interrupt-names = "pcie", "msi";
++	msi-controller;
++	msi-parent = <&mip0>;
+ 	status = "okay";
  };
  
-+&pcie2 {
-+	/* Disable MSI for rpi-6.18.y: kernel lacks complete MSI-X support */
-+	no-msi;
-+};
-+
- &rp1_target {
- 	rp1: rp1 {
- 		compatible = "simple-bus";
-
 diff --git a/arch/arm64/boot/dts/broadcom/bcm2712-rpi-cm5.dtsi b/arch/arm64/boot/dts/broadcom/bcm2712-rpi-cm5.dtsi
 index 4eb7818..18e8157 100644
 --- a/arch/arm64/boot/dts/broadcom/bcm2712-rpi-cm5.dtsi
 +++ b/arch/arm64/boot/dts/broadcom/bcm2712-rpi-cm5.dtsi
-@@ -140,6 +140,10 @@ rp1_target: &pcie2 {
- 	};
+@@ -312,6 +312,9 @@
+ &pcie2 {
++	interrupt-names = "pcie", "msi";
++	msi-controller;
++	msi-parent = <&mip0>;
+ 	status = "okay";
  };
- 
-+&pcie2 {
-+	/* Disable MSI for rpi-6.18.y: kernel lacks complete MSI-X support */
-+	no-msi;
-+};
-+
- &rp1_target {
- 	rp1: rp1 {
- 		compatible = "simple-bus";
  
 -- 
 2.35.3
