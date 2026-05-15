@@ -23,14 +23,14 @@ enable_uart=1
 # Disable compensation for displays with overscan
 # disable_overscan=1
 
-[pi4]
-# Reduce GPU memory to give more to CPU.
-gpu_mem=32
-
 # Disable Bluetooth.
 dtoverlay=disable-bt
 # Disable Wireless Lan.
 dtoverlay=disable-wifi
+
+[pi4]
+# Reduce GPU memory to give more to CPU.
+gpu_mem=32
 
 # Enable maximum compatibility on both HDMI ports;
 # only the one closest to the power/USB-C port will work in practice.
@@ -39,6 +39,7 @@ hdmi_safe:1=1
 dtoverlay=dwc2,dr_mode=host
 
 [pi5]
+dtoverlay=fixup-blconfig
 usb_max_current_enable=1
 enable_uart=0
 # gpio=14=op,dh
