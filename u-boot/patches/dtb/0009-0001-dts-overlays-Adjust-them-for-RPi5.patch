@@ -40,71 +40,6 @@ index e142a7d..88bfdc2 100644
  	crystalfontz-cfa050_pi_m.dtbo \
  	cutiepi-panel.dtbo \
  	dacberry400.dtbo \
-diff --git a/arch/arm/boot/dts/overlays/cma64-overlay.dts b/arch/arm/boot/dts/overlays/cma64-overlay.dts
-new file mode 100644
-index 0000000..92d25d3
---- /dev/null
-+++ b/arch/arm/boot/dts/overlays/cma64-overlay.dts
-@@ -0,0 +1,40 @@
-+/*
-+ * cma64.dts
-+ */
-+
-+/dts-v1/;
-+/plugin/;
-+
-+/*
-+ * "cma" overlay uses  #size-cells = <1>. Raspberry Pi 5 uses #size-cells = <2>
-+ */
-+
-+/ {
-+	compatible = "brcm,bcm2712";
-+
-+	fragment@0 {
-+		target = <&cma>;
-+		frag0: __overlay__ {
-+			/*
-+			 * The default size when using this overlay is 256 MB
-+			 * and should be kept as is for backwards
-+			 * compatibility.
-+			 */
-+			size = <0x0 0x10000000>;
-+		};
-+	};
-+
-+	__overrides__ {
-+		cma-512 = <&frag0>,"size:4=0x20000000";
-+		cma-448 = <&frag0>,"size:4=0x1c000000";
-+		cma-384 = <&frag0>,"size:4=0x18000000";
-+		cma-320 = <&frag0>,"size:4=0x14000000";
-+		cma-256 = <&frag0>,"size:4=0x10000000";
-+		cma-192 = <&frag0>,"size:4=0x0C000000";
-+		cma-128 = <&frag0>,"size:4=0x08000000";
-+		cma-96  = <&frag0>,"size:4=0x06000000";
-+		cma-64  = <&frag0>,"size:4=0x04000000";
-+		cma-size = <&frag0>,"size:4"; /* in bytes, 4MB aligned */
-+		cma-default = <0>,"-0";
-+	};
-+};
-diff --git a/arch/arm/boot/dts/overlays/enable-bt-pi5-overlay.dts b/arch/arm/boot/dts/overlays/enable-bt-pi5-overlay.dts
-new file mode 100644
-index 0000000..21cb04d
---- /dev/null
-+++ b/arch/arm/boot/dts/overlays/enable-bt-pi5-overlay.dts
-@@ -0,0 +1,13 @@
-+/dts-v1/;
-+/plugin/;
-+
-+/{
-+	compatible = "brcm,bcm2712";
-+
-+	fragment@0 {
-+		target = <&bluetooth>;
-+		__overlay__ {
-+			status = "okay";
-+		};
-+	};
-+};
 diff --git a/arch/arm/boot/dts/overlays/overlay_map.dts b/arch/arm/boot/dts/overlays/overlay_map.dts
 index 6fa5979..6d6c5e6 100644
 --- a/arch/arm/boot/dts/overlays/overlay_map.dts
@@ -162,21 +97,6 @@ index 6fa5979..6d6c5e6 100644
  	vc4-fkms-v3d {
  		bcm2835;
  		bcm2711 = "vc4-fkms-v3d-pi4";
-diff --git a/arch/arm/boot/dts/overlays/upstream-pi5.dts b/arch/arm/boot/dts/overlays/upstream-pi5.dts
-new file mode 100644
-index 0000000..e0e0a04
---- /dev/null
-+++ b/arch/arm/boot/dts/overlays/upstream-pi5.dts
-@@ -0,0 +1,9 @@
-+//
-+
-+/dts-v1/;
-+/plugin/;
-+
-+
-+/ {
-+	compatible = "brcm,bcm2712";
-+};
 diff --git a/arch/arm/boot/dts/overlays/vc4-kms-v3d-pi5-overlay.dts b/arch/arm/boot/dts/overlays/vc4-kms-v3d-pi5-overlay.dts
 index f887818..e9504a7 100644
 --- a/arch/arm/boot/dts/overlays/vc4-kms-v3d-pi5-overlay.dts
