@@ -15,10 +15,10 @@ index 82ad3035308..6327028f330 100644
  
 diff --git a/arch/arm/dts/bcm2712-rpi-5-b-u-boot.dtsi b/arch/arm/dts/bcm2712-rpi-5-b-u-boot.dtsi
 new file mode 100644
-index 00000000000..c746d5f7e5c
+index 00000000000..9c5035642cb
 --- /dev/null
 +++ b/arch/arm/dts/bcm2712-rpi-5-b-u-boot.dtsi
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,140 @@
 +/*
 + * PCIe DMA Override
 + *
@@ -120,6 +120,7 @@ index 00000000000..c746d5f7e5c
 +
 +/ {
 +	aliases {
++		ethernet0 = &rp1_eth;
 +		blconfig = &blconfig;
 +	};
 +
@@ -315,7 +316,7 @@ index a86875b1833..d49c9f59fb2 100644
  #define PCIE_MISC_HARD_PCIE_HARD_DEBUG_SERDES_IDDQ_MASK         0x08000000
  
 diff --git a/arch/arm/mach-bcm283x/init.c b/arch/arm/mach-bcm283x/init.c
-index 7a1de22e0ae..c4873d2d82c 100644
+index 7a1de22e0ae..fa8f2533463 100644
 --- a/arch/arm/mach-bcm283x/init.c
 +++ b/arch/arm/mach-bcm283x/init.c
 @@ -18,7 +18,7 @@
@@ -327,26 +328,47 @@ index 7a1de22e0ae..c4873d2d82c 100644
  
  static struct mm_region bcm283x_mem_map[MEM_MAP_MAX_ENTRIES] = {
  	{
-@@ -76,15 +76,31 @@ static struct mm_region bcm2712_mem_map[MEM_MAP_MAX_ENTRIES] = {
+@@ -69,25 +69,37 @@ static struct mm_region bcm2711_mem_map[MEM_MAP_MAX_ENTRIES] = {
+ 
+ static struct mm_region bcm2712_mem_map[MEM_MAP_MAX_ENTRIES] = {
+ 	{
+-		/* First 1GB of DRAM */
+-		.virt = 0x00000000UL,
+-		.phys = 0x00000000UL,
+-		.size = 0x40000000UL,
++		/* DRAM aperture - up to 64 GiB at 0x0 per bcm2712.dtsi
++		 * axi/ranges entry <0x00 0x00000000 ... 0x10 0x00000000>.
++		 * RPi 5 SKUs ship with 4/8/16 GiB; map the full aperture so
++		 * U-Boot can reach all banks regardless of SoC variant.
++		 */
++		.virt = 0x0000000000UL,
++		.phys = 0x0000000000UL,
++		.size = 0x1000000000UL,
  		.attrs = PTE_BLOCK_MEMTYPE(MT_NORMAL) |
  			 PTE_BLOCK_INNER_SHARE
  	}, {
 -		/* Beginning of AXI bus where uSD controller lives */
-+		/* AXI/PCIe address space - contains PCIe controllers and peripherals
-+		 * Maps 0x1000000000-0x1100000000 (4GB range)
++		/* bcm2712.dtsi axi/ranges entry:
++		 * <0x10 0x00000000 ... 0x01 0x00000000>
++		 * Covers 0x10_0000_0000 .. 0x10_ffff_ffff (4 GiB), including
++		 * /soc peripherals and PCIe controller/MMIO registers.
 +		 */
  		.virt = 0x1000000000UL,
  		.phys = 0x1000000000UL,
 -		.size = 0x0002000000UL,
 +		.size = 0x0100000000UL,
-+		.attrs = PTE_BLOCK_MEMTYPE(MT_DEVICE_NGNRNE) |
-+			 PTE_BLOCK_NON_SHARE |
-+			 PTE_BLOCK_PXN | PTE_BLOCK_UXN
-+		}, {
-+		/* PCIe outbound windows for pcie0/1/2 (both 64-bit
-+		 * prefetchable and 32-bit non-prefetchable regions).
-+		 * Covers CPU 0x14_0000_0000 .. 0x20_0000_0000 (48 GiB).
-+		 * Required so that NVMe / xHCI BAR accesses do not fault.
+ 		.attrs = PTE_BLOCK_MEMTYPE(MT_DEVICE_NGNRNE) |
+ 			 PTE_BLOCK_NON_SHARE |
+ 			 PTE_BLOCK_PXN | PTE_BLOCK_UXN
+ 	}, {
+-		/* SoC bus */
+-		.virt = 0x107c000000UL,
+-		.phys = 0x107c000000UL,
+-		.size = 0x0004000000UL,
++		/* bcm2712.dtsi axi/ranges entries:
++		 * <0x14 ... 0x04 ...>, <0x18 ... 0x04 ...>, <0x1c ... 0x04 ...>
++		 * Combined 0x14_0000_0000 .. 0x1f_ffff_ffff (48 GiB) for
++		 * PCIe outbound windows used by NVMe / xHCI / RP1 BAR accesses.
 +		 */
 +		.virt = 0x1400000000UL,
 +		.phys = 0x1400000000UL,
@@ -354,14 +376,6 @@ index 7a1de22e0ae..c4873d2d82c 100644
  		.attrs = PTE_BLOCK_MEMTYPE(MT_DEVICE_NGNRNE) |
  			 PTE_BLOCK_NON_SHARE |
  			 PTE_BLOCK_PXN | PTE_BLOCK_UXN
- 	}, {
--		/* SoC bus */
-+		/* SoC peripheral bus - UART, timers, GPIO, etc.
-+		 * Ranges from 0x107c000000, mapped to local 0x00000000
-+		 */
- 		.virt = 0x107c000000UL,
- 		.phys = 0x107c000000UL,
- 		.size = 0x0004000000UL,
 diff --git a/arch/arm/mach-bcm283x/reset.c b/arch/arm/mach-bcm283x/reset.c
 index 1dc7ce50d1d..3532a980b75 100644
 --- a/arch/arm/mach-bcm283x/reset.c
@@ -414,7 +428,7 @@ index 1dc7ce50d1d..3532a980b75 100644
  
  void __efi_runtime EFIAPI efi_reset_system(
 diff --git a/board/raspberrypi/rpi/rpi.c b/board/raspberrypi/rpi/rpi.c
-index b0a1484c0fa..27d21980c1e 100644
+index b0a1484c0fa..be480a3c477 100644
 --- a/board/raspberrypi/rpi/rpi.c
 +++ b/board/raspberrypi/rpi/rpi.c
 @@ -3,33 +3,41 @@
@@ -498,9 +512,12 @@ index b0a1484c0fa..27d21980c1e 100644
  {
  	/* Using dtb from firmware directly; leave it alone */
  	if (fdt == fw_fdt)
-@@ -629,12 +641,79 @@ void  update_fdt_from_fw(void *fdt, void *fw_fdt)
+@@ -628,13 +640,82 @@ void  update_fdt_from_fw(void *fdt, void *fw_fdt)
+ 	/* address of the PHY device as provided by the firmware  */
  	copy_property(fdt, fw_fdt, "ethernet0/mdio@e14/ethernet-phy@1", "reg");
  
++	copy_property(fdt, fw_fdt, "ethernet0/mdio/ethernet-phy@1", "reg");
++
  	/* Bluetooth device address as provided by the firmware */
 -	copy_property(fdt, fw_fdt, "/soc/serial@7e201000/bluetooth", "local-bd-address");
 +	copy_property(fdt, fw_fdt, "/soc/serial@7e201000/bluetooth",
@@ -579,7 +596,7 @@ index b0a1484c0fa..27d21980c1e 100644
  int ft_board_setup(void *blob, struct bd_info *bd)
  {
  	int node;
-@@ -644,6 +723,10 @@ int ft_board_setup(void *blob, struct bd_info *bd)
+@@ -644,6 +725,10 @@ int ft_board_setup(void *blob, struct bd_info *bd)
  	else
  		update_fdt_from_fw(blob, (void *)gd->fdt_blob);
  
@@ -590,7 +607,7 @@ index b0a1484c0fa..27d21980c1e 100644
  	if (CONFIG_IS_ENABLED(FDT_SIMPLEFB)) {
  		node = fdt_node_offset_by_compatible(blob, -1, "simple-framebuffer");
  		if (node < 0)
-@@ -661,11 +744,337 @@ int ft_board_setup(void *blob, struct bd_info *bd)
+@@ -661,11 +746,337 @@ int ft_board_setup(void *blob, struct bd_info *bd)
  	return 0;
  }
  
@@ -930,7 +947,7 @@ index b0a1484c0fa..27d21980c1e 100644
  }
  
  static bool is_rpi3(void)
-@@ -681,39 +1090,47 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -681,39 +1092,47 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	struct {
  		const char *fdt_compatible;
  		const char *acpi_scope;
@@ -997,7 +1014,7 @@ index b0a1484c0fa..27d21980c1e 100644
  				if (ret) {
  					node = -FDT_ERR_NOTFOUND;
  					break;
-@@ -722,11 +1139,15 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -722,11 +1141,15 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  				if (r.start == map[i].mmio_address)
  					break;
  
@@ -1016,7 +1033,7 @@ index b0a1484c0fa..27d21980c1e 100644
  		}
  		acpigen_write_scope(ctx, map[i].acpi_scope);
  		acpigen_write_name_integer(ctx, "_STA", enabled ? 0xf : 0);
-@@ -734,34 +1155,38 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -734,34 +1157,38 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	}
  
  	/* GPIO quirks */
@@ -1063,7 +1080,7 @@ index b0a1484c0fa..27d21980c1e 100644
  				acpigen_emit_namestring(ctx, "\\_SB.GDV1.DMTR");
  			acpigen_pop_len(ctx);
  		}
-@@ -771,15 +1196,13 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -771,15 +1198,13 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	uart_in_use = ~0;
  	mini_clock_rate = 0x1000000;
  
@@ -1083,7 +1100,7 @@ index b0a1484c0fa..27d21980c1e 100644
  	if (!ret) {
  		if (uart_in_use == 0)
  			log_err("Invalid config: PL011 and MiniUART are both enabled.");
-@@ -802,7 +1225,8 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -802,7 +1227,8 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	return 0;
  }
  
@@ -1121,7 +1138,7 @@ index 69e8e72c5d7..d862cfc3edb 100644
  CONFIG_FDT_SIMPLEFB=y
  CONFIG_USE_PREBOOT=y
 -CONFIG_PREBOOT="pci enum; usb start;"
-+CONFIG_PREBOOT="nvme scan; usb start; if load usb :auto ${scriptaddr} persistent.env; then env import -t ${scriptaddr} ${filesize}; fi; if load usb :auto ${scriptaddr} once.env; then env import -t ${scriptaddr} ${filesize}; fatrm usb :auto once.env; fi; env export -t ${scriptaddr}; fatwrite usb :auto ${scriptaddr} machine.env ${filesize}"
++CONFIG_PREBOOT="pci enum; nvme scan; usb start; if load usb :auto ${scriptaddr} persistent.env; then env import -t ${scriptaddr} ${filesize}; fi; if load usb :auto ${scriptaddr} once.env; then env import -t ${scriptaddr} ${filesize}; fatrm usb :auto once.env; fi; env export -t ${scriptaddr}; fatwrite usb :auto ${scriptaddr} machine.env ${filesize}"
  CONFIG_SYS_PBSIZE=1049
  # CONFIG_DISPLAY_CPUINFO is not set
  # CONFIG_DISPLAY_BOARDINFO is not set
