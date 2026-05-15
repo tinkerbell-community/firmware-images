@@ -42,7 +42,7 @@ jobs:
           # Parse values from version file
           FILE_UBOOT_VER=$(grep '^uboot ' "$VERSION_FILE" | awk '{print $2}')
           FILE_FIRMWARE_VER=$(grep '^firmware ' "$VERSION_FILE" | awk '{print $2}')
-          FILE_TALOS_KERNEL_VER=$(grep '^talos_kernel ' "$VERSION_FILE" | awk '{print $2}')
+          FILE_KERNEL_VER=$(grep '^kernel ' "$VERSION_FILE" | awk '{print $2}')
 
           # Use workflow_dispatch inputs if provided, otherwise use file values
           uboot="${{ inputs.uboot }}"
