@@ -427,11 +427,273 @@ index 1dc7ce50d1d..3532a980b75 100644
  #ifdef CONFIG_EFI_LOADER
  
  void __efi_runtime EFIAPI efi_reset_system(
+diff --git a/board/raspberrypi/rpi/Makefile b/board/raspberrypi/rpi/Makefile
+index bb1b7cc630f..ad8886396f5 100644
+--- a/board/raspberrypi/rpi/Makefile
++++ b/board/raspberrypi/rpi/Makefile
+@@ -4,5 +4,6 @@
+ 
+ obj-y	:= rpi.o
+ obj-y	+= lowlevel_init.o
++obj-$(CONFIG_BCM2712) += bootspi.o
+ 
+ obj-$(CONFIG_GENERATE_ACPI_TABLE) += dsdt_generated.o
+diff --git a/board/raspberrypi/rpi/bootspi.c b/board/raspberrypi/rpi/bootspi.c
+new file mode 100644
+index 00000000000..6335ceaaa0c
+--- /dev/null
++++ b/board/raspberrypi/rpi/bootspi.c
+@@ -0,0 +1,219 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Raspberry Pi 5 (BCM2712) bootloader EEPROM reader.
++ *
++ * The Pi 5 bootloader image lives in a SPI NOR flash on the SoC's "spi10"
++ * controller (downstream alias) at 0x10_7d00_4000.  The controller is a
++ * standard BCM2835 SPI block ("brcm,bcm2835-spi") and the flash is a W25Q*
++ * device.  This file talks to it directly via polled MMIO, with no DT, no
++ * driver-model uclass registration, and no SPI flash framework, so the
++ * reader works even when the firmware DT omits the blconfig nvmem-rmem node
++ * (as is the case on current Pi 5 firmware).
++ *
++ * Read-only.  Only the SPI NOR READ (0x03) opcode is ever issued; the
++ * EEPROM cannot be modified through this path.
++ */
++
++#include <env.h>
++#include <log.h>
++#include <malloc.h>
++#include <asm/io.h>
++#include <asm/unaligned.h>
++#include <linux/bitops.h>
++#include <linux/errno.h>
++#include <linux/sizes.h>
++#include <linux/string.h>
++#include <linux/types.h>
++
++#include "bootspi.h"
++
++#define BCM2712_BOOTSPI_BASE	0x107d004000ULL
++
++/* BCM2835 SPI controller registers */
++#define SPI_CS			0x00
++#define SPI_FIFO		0x04
++#define SPI_CLK			0x08
++#define SPI_DLEN		0x0c
++
++#define CS_CPHA			BIT(2)
++#define CS_CPOL			BIT(3)
++#define CS_CLEAR_TX		BIT(4)
++#define CS_CLEAR_RX		BIT(5)
++#define CS_TA			BIT(7)
++#define CS_DONE			BIT(16)
++#define CS_RXD			BIT(17)
++#define CS_TXD			BIT(18)
++
++/*
++ * clk_vpu drives this controller; on the Pi 5 it runs in the 500 MHz range.
++ * SCLK = clk_vpu / CDIV.  CDIV must be even; 0 means 65536.  64 gives ~7.8
++ * MHz which is well within W25Q READ-mode timing across all firmware-set
++ * clk_vpu rates and leaves margin even if the firmware bumps the clock.
++ * Reading a 2 MiB image at this rate takes ~2 s — fine for preboot.
++ */
++#define BOOTSPI_CDIV		64
++
++/* SPI NOR opcodes (read-only set) */
++#define CMD_READ		0x03
++
++/*
++ * pieeprom.bin section format.  Each section header is big-endian:
++ *   u32 magic
++ *   u32 length          // bytes after the 8-byte header
++ *   (FILE sections only) char filename[12]
++ *   (FILE sections only) u32 sub-length / pad
++ *   u8  body[length - (FILE ? 16 : 0)]
++ * Sections are 8-byte aligned.  Padding sections (PAD_MAGIC) are skipped.
++ * See raspberrypi/rpi-eeprom: rpi-eeprom-config (BootloaderImage.parse).
++ */
++#define PIEEPROM_MAGIC		0x55aaf00f
++#define PIEEPROM_FILE_MAGIC	0x55aaf11f
++#define PIEEPROM_PAD_MAGIC	0x55aafeef
++#define PIEEPROM_MAGIC_MASK	0xfffff00f
++
++#define PIEEPROM_FILE_HDR_OVERHEAD	16	/* filename(12) + pad(4) */
++#define PIEEPROM_FILENAME_LEN		12
++
++/* Pi 5 ships either a 512 KiB or 2 MiB image */
++#define PIEEPROM_MAX_SIZE	SZ_2M
++
++static void bootspi_init(void __iomem *base)
++{
++	writel(BOOTSPI_CDIV, base + SPI_CLK);
++	/* CS0, mode 0 (CPOL=CPHA=0), clear both FIFOs, TA=0 */
++	writel(CS_CLEAR_RX | CS_CLEAR_TX, base + SPI_CS);
++}
++
++/*
++ * Polled byte-at-a-time transfer.  The BCM2835 SPI controller is fully
++ * bidirectional: every byte written to the TX FIFO produces a byte in the
++ * RX FIFO.  Pass tx=NULL to send 0xff dummies and rx=NULL to discard.
++ */
++static void bootspi_xfer(void __iomem *base, const u8 *tx, u8 *rx, size_t len)
++{
++	size_t i;
++
++	for (i = 0; i < len; i++) {
++		while (!(readl(base + SPI_CS) & CS_TXD))
++			;
++		writel(tx ? tx[i] : 0xff, base + SPI_FIFO);
++
++		while (!(readl(base + SPI_CS) & CS_RXD))
++			;
++		if (rx)
++			rx[i] = readl(base + SPI_FIFO);
++		else
++			(void)readl(base + SPI_FIFO);
++	}
++}
++
++static void bootspi_flash_read(void __iomem *base, u32 addr, u8 *buf,
++			       size_t len)
++{
++	u8 cmd[4] = {
++		CMD_READ,
++		(addr >> 16) & 0xff,
++		(addr >> 8) & 0xff,
++		addr & 0xff,
++	};
++
++	/* Assert CS (TA=1), clear FIFOs */
++	writel(CS_TA | CS_CLEAR_RX | CS_CLEAR_TX, base + SPI_CS);
++
++	bootspi_xfer(base, cmd, NULL, sizeof(cmd));
++	bootspi_xfer(base, NULL, buf, len);
++
++	/* Wait for in-flight bits to drain, then deassert CS */
++	while (!(readl(base + SPI_CS) & CS_DONE))
++		;
++	writel(0, base + SPI_CS);
++}
++
++/*
++ * Walk pieeprom sections looking for "bootconf.txt".  On success returns 0
++ * and sets *out_off / *out_len to the position and size of the config text
++ * within image[].
++ */
++static int pieeprom_find_bootconf(const u8 *image, size_t image_size,
++				  size_t *out_off, size_t *out_len)
++{
++	size_t off = 0;
++
++	while (off + 8 <= image_size) {
++		u32 magic = get_unaligned_be32(image + off);
++		u32 length = get_unaligned_be32(image + off + 4);
++
++		if (magic == 0 || magic == 0xffffffff)
++			break;
++		if ((magic & PIEEPROM_MAGIC_MASK) != PIEEPROM_MAGIC)
++			return -EINVAL;
++
++		if (magic == PIEEPROM_FILE_MAGIC &&
++		    off + 8 + PIEEPROM_FILENAME_LEN <= image_size &&
++		    length >= PIEEPROM_FILE_HDR_OVERHEAD) {
++			char fname[PIEEPROM_FILENAME_LEN + 1] = { 0 };
++
++			memcpy(fname, image + off + 8, PIEEPROM_FILENAME_LEN);
++			if (!strcmp(fname, "bootconf.txt")) {
++				size_t body_off = off + 8 +
++					PIEEPROM_FILE_HDR_OVERHEAD;
++				size_t body_len = length -
++					PIEEPROM_FILE_HDR_OVERHEAD;
++
++				if (body_off + body_len > image_size)
++					return -EINVAL;
++				*out_off = body_off;
++				*out_len = body_len;
++				return 0;
++			}
++		}
++
++		off += 8 + length;
++		off = (off + 7) & ~7;
++	}
++
++	return -ENOENT;
++}
++
++int rpi5_bootspi_export_blconfig(void)
++{
++	void __iomem *base = (void __iomem *)BCM2712_BOOTSPI_BASE;
++	u8 *image, *conf;
++	size_t conf_off, conf_len;
++	int ret;
++
++	image = malloc(PIEEPROM_MAX_SIZE);
++	if (!image)
++		return -ENOMEM;
++
++	bootspi_init(base);
++	bootspi_flash_read(base, 0, image, PIEEPROM_MAX_SIZE);
++
++	ret = pieeprom_find_bootconf(image, PIEEPROM_MAX_SIZE,
++				     &conf_off, &conf_len);
++	if (ret) {
++		log_warning("rpi5 bootspi: bootconf.txt not found (%d)\n", ret);
++		goto out_free;
++	}
++
++	/*
++	 * Copy just the config text into a small persistent buffer and free
++	 * the 2 MiB scratch image.  The buffer lives until reboot so preboot
++	 * can fatwrite from it.
++	 */
++	conf = malloc(conf_len);
++	if (!conf) {
++		ret = -ENOMEM;
++		goto out_free;
++	}
++	memcpy(conf, image + conf_off, conf_len);
++
++	env_set_hex("blconfig_addr", (ulong)conf);
++	env_set_hex("blconfig_size", (ulong)conf_len);
++	log_info("rpi5 bootspi: bootconf.txt %zu bytes @ %p\n", conf_len, conf);
++
++	ret = 0;
++out_free:
++	free(image);
++	return ret;
++}
+diff --git a/board/raspberrypi/rpi/bootspi.h b/board/raspberrypi/rpi/bootspi.h
+new file mode 100644
+index 00000000000..a80e7c6d763
+--- /dev/null
++++ b/board/raspberrypi/rpi/bootspi.h
+@@ -0,0 +1,20 @@
++/* SPDX-License-Identifier: GPL-2.0+ */
++/*
++ * Raspberry Pi 5 bootloader EEPROM reader — see bootspi.c.
++ */
++
++#ifndef __RPI_BOOTSPI_H
++#define __RPI_BOOTSPI_H
++
++/*
++ * Read the Pi 5 bootloader EEPROM, find bootconf.txt inside the pieeprom
++ * image, and publish its location/size as the blconfig_addr / blconfig_size
++ * environment variables (same contract as the DT-based path in
++ * set_blconfig_env()).  Returns 0 on success, -errno otherwise.
++ *
++ * Allocates a persistent buffer to hold the config text; the 2 MiB scratch
++ * image is freed before return.
++ */
++int rpi5_bootspi_export_blconfig(void);
++
++#endif /* __RPI_BOOTSPI_H */
 diff --git a/board/raspberrypi/rpi/rpi.c b/board/raspberrypi/rpi/rpi.c
-index b0a1484c0fa..e54b56fe119 100644
+index b0a1484c0fa..d8a8718c36d 100644
 --- a/board/raspberrypi/rpi/rpi.c
 +++ b/board/raspberrypi/rpi/rpi.c
-@@ -3,33 +3,41 @@
+@@ -3,33 +3,44 @@
   * (C) Copyright 2012-2016 Stephen Warren
   */
  
@@ -456,6 +718,9 @@ index b0a1484c0fa..e54b56fe119 100644
  #include <asm/global_data.h>
  #include <dm/platform_data/serial_bcm283x_mu.h>
 +#include <broadcom/bcm_board_types.h>
++#ifdef CONFIG_BCM2712
++#include "bootspi.h"
++#endif
  #ifdef CONFIG_ARM64
  #include <asm/armv8/mmu.h>
  #endif
@@ -474,7 +739,7 @@ index b0a1484c0fa..e54b56fe119 100644
  
  DECLARE_GLOBAL_DATA_PTR;
  
-@@ -94,14 +102,14 @@ struct efi_capsule_update_info update_info = {
+@@ -94,14 +105,14 @@ struct efi_capsule_update_info update_info = {
   */
  struct rpi_model {
  	const char *name;
@@ -492,7 +757,7 @@ index b0a1484c0fa..e54b56fe119 100644
  
  static const struct rpi_model rpi_model_unknown = {
  	"Unknown model",
-@@ -472,6 +480,51 @@ static void set_serial_number(void)
+@@ -472,6 +483,73 @@ static void set_serial_number(void)
  	env_set("serial#", serial_string);
  }
  
@@ -519,32 +784,54 @@ index b0a1484c0fa..e54b56fe119 100644
 + * region in the firmware DT) as environment variables so that scripts can
 + * read or fatwrite the plain-text config without parsing the firmware DT.
 + */
-+static void set_blconfig_env(void)
++static bool set_blconfig_env_from_fdt(void)
 +{
 +	void *fw_fdt = (void *)fw_dtb_pointer;
 +	struct fdt_resource res;
 +	int node;
 +
 +	if (!fw_fdt || fdt_magic(fw_fdt) != FDT_MAGIC)
-+		return;
++		return false;
 +
 +	node = rpi_find_blconfig(fw_fdt);
 +	if (node < 0)
-+		return;
++		return false;
 +
 +	if (fdt_get_resource(fw_fdt, node, "reg", 0, &res))
-+		return;
++		return false;
 +	if (!res.start || res.start == res.end)
-+		return;
++		return false;
 +
 +	env_set_hex("blconfig_addr", (ulong)res.start);
 +	env_set_hex("blconfig_size", (ulong)(res.end - res.start + 1));
++	return true;
++}
++
++static void set_blconfig_env(void)
++{
++	if (set_blconfig_env_from_fdt())
++		return;
++
++#ifdef CONFIG_BCM2712
++	/*
++	 * Current Pi 5 firmware omits the blconfig nvmem-rmem node from the
++	 * DT it hands U-Boot.  Fall back to reading the bootloader EEPROM
++	 * directly over the spi10 controller.
++	 */
++#ifdef CONFIG_BOARD_TYPES
++	if (gd->board_type >= RPI_BOARD_TYPE_RPI5_FAMILY_MIN &&
++	    gd->board_type <= RPI_BOARD_TYPE_RPI5_FAMILY_MAX)
++		rpi5_bootspi_export_blconfig();
++#else
++	rpi5_bootspi_export_blconfig();
++#endif
++#endif
 +}
 +
  int misc_init_r(void)
  {
  	set_fdt_addr();
-@@ -481,6 +534,7 @@ int misc_init_r(void)
+@@ -481,6 +559,7 @@ int misc_init_r(void)
  	set_board_info();
  #endif
  	set_serial_number();
@@ -552,7 +839,7 @@ index b0a1484c0fa..e54b56fe119 100644
  
  	return 0;
  }
-@@ -546,6 +600,10 @@ static void get_board_revision(void)
+@@ -546,6 +625,10 @@ static void get_board_revision(void)
  		model = &models[rev_type];
  	}
  
@@ -563,7 +850,7 @@ index b0a1484c0fa..e54b56fe119 100644
  	printf("RPI %s (0x%x)\n", model->name, revision);
  }
  
-@@ -591,7 +649,7 @@ int copy_property(void *dst, void *src, char *path, char *property)
+@@ -591,7 +674,7 @@ int copy_property(void *dst, void *src, char *path, char *property)
  }
  
  /* Copy tweaks from the firmware dtb to the loaded dtb */
@@ -572,7 +859,7 @@ index b0a1484c0fa..e54b56fe119 100644
  {
  	/* Using dtb from firmware directly; leave it alone */
  	if (fdt == fw_fdt)
-@@ -628,13 +686,82 @@ void  update_fdt_from_fw(void *fdt, void *fw_fdt)
+@@ -628,13 +711,82 @@ void  update_fdt_from_fw(void *fdt, void *fw_fdt)
  	/* address of the PHY device as provided by the firmware  */
  	copy_property(fdt, fw_fdt, "ethernet0/mdio@e14/ethernet-phy@1", "reg");
  
@@ -656,7 +943,7 @@ index b0a1484c0fa..e54b56fe119 100644
  int ft_board_setup(void *blob, struct bd_info *bd)
  {
  	int node;
-@@ -644,6 +771,10 @@ int ft_board_setup(void *blob, struct bd_info *bd)
+@@ -644,6 +796,10 @@ int ft_board_setup(void *blob, struct bd_info *bd)
  	else
  		update_fdt_from_fw(blob, (void *)gd->fdt_blob);
  
@@ -667,7 +954,7 @@ index b0a1484c0fa..e54b56fe119 100644
  	if (CONFIG_IS_ENABLED(FDT_SIMPLEFB)) {
  		node = fdt_node_offset_by_compatible(blob, -1, "simple-framebuffer");
  		if (node < 0)
-@@ -661,11 +792,337 @@ int ft_board_setup(void *blob, struct bd_info *bd)
+@@ -661,11 +817,337 @@ int ft_board_setup(void *blob, struct bd_info *bd)
  	return 0;
  }
  
@@ -1007,7 +1294,7 @@ index b0a1484c0fa..e54b56fe119 100644
  }
  
  static bool is_rpi3(void)
-@@ -681,39 +1138,47 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -681,39 +1163,47 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	struct {
  		const char *fdt_compatible;
  		const char *acpi_scope;
@@ -1074,7 +1361,7 @@ index b0a1484c0fa..e54b56fe119 100644
  				if (ret) {
  					node = -FDT_ERR_NOTFOUND;
  					break;
-@@ -722,11 +1187,15 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -722,11 +1212,15 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  				if (r.start == map[i].mmio_address)
  					break;
  
@@ -1093,7 +1380,7 @@ index b0a1484c0fa..e54b56fe119 100644
  		}
  		acpigen_write_scope(ctx, map[i].acpi_scope);
  		acpigen_write_name_integer(ctx, "_STA", enabled ? 0xf : 0);
-@@ -734,34 +1203,38 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -734,34 +1228,38 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	}
  
  	/* GPIO quirks */
@@ -1140,7 +1427,7 @@ index b0a1484c0fa..e54b56fe119 100644
  				acpigen_emit_namestring(ctx, "\\_SB.GDV1.DMTR");
  			acpigen_pop_len(ctx);
  		}
-@@ -771,15 +1244,13 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -771,15 +1269,13 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	uart_in_use = ~0;
  	mini_clock_rate = 0x1000000;
  
@@ -1160,7 +1447,7 @@ index b0a1484c0fa..e54b56fe119 100644
  	if (!ret) {
  		if (uart_in_use == 0)
  			log_err("Invalid config: PL011 and MiniUART are both enabled.");
-@@ -802,7 +1273,8 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -802,7 +1298,8 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	return 0;
  }
  
