@@ -428,7 +428,7 @@ index 1dc7ce50d1d..3532a980b75 100644
  
  void __efi_runtime EFIAPI efi_reset_system(
 diff --git a/board/raspberrypi/rpi/rpi.c b/board/raspberrypi/rpi/rpi.c
-index b0a1484c0fa..be480a3c477 100644
+index b0a1484c0fa..701fc42a220 100644
 --- a/board/raspberrypi/rpi/rpi.c
 +++ b/board/raspberrypi/rpi/rpi.c
 @@ -3,33 +3,41 @@
@@ -492,7 +492,49 @@ index b0a1484c0fa..be480a3c477 100644
  
  static const struct rpi_model rpi_model_unknown = {
  	"Unknown model",
-@@ -546,6 +554,10 @@ static void get_board_revision(void)
+@@ -472,6 +480,33 @@ static void set_serial_number(void)
+ 	env_set("serial#", serial_string);
+ }
+ 
++/*
++ * Expose the VPU-populated bootloader EEPROM config (blconfig nvmem-rmem
++ * region in the firmware DT) as environment variables so that scripts can
++ * read or fatwrite the plain-text config without parsing the firmware DT.
++ */
++static void set_blconfig_env(void)
++{
++	void *fw_fdt = (void *)fw_dtb_pointer;
++	struct fdt_resource res;
++	int node;
++
++	if (!fw_fdt || fdt_magic(fw_fdt) != FDT_MAGIC)
++		return;
++
++	node = fdt_path_offset(fw_fdt, "blconfig");
++	if (node < 0)
++		return;
++
++	if (fdt_get_resource(fw_fdt, node, "reg", 0, &res))
++		return;
++	if (!res.start || res.start == res.end)
++		return;
++
++	env_set_hex("blconfig_addr", (ulong)res.start);
++	env_set_hex("blconfig_size", (ulong)(res.end - res.start + 1));
++}
++
+ int misc_init_r(void)
+ {
+ 	set_fdt_addr();
+@@ -481,6 +516,7 @@ int misc_init_r(void)
+ 	set_board_info();
+ #endif
+ 	set_serial_number();
++	set_blconfig_env();
+ 
+ 	return 0;
+ }
+@@ -546,6 +582,10 @@ static void get_board_revision(void)
  		model = &models[rev_type];
  	}
  
@@ -503,7 +545,7 @@ index b0a1484c0fa..be480a3c477 100644
  	printf("RPI %s (0x%x)\n", model->name, revision);
  }
  
-@@ -591,7 +603,7 @@ int copy_property(void *dst, void *src, char *path, char *property)
+@@ -591,7 +631,7 @@ int copy_property(void *dst, void *src, char *path, char *property)
  }
  
  /* Copy tweaks from the firmware dtb to the loaded dtb */
@@ -512,7 +554,7 @@ index b0a1484c0fa..be480a3c477 100644
  {
  	/* Using dtb from firmware directly; leave it alone */
  	if (fdt == fw_fdt)
-@@ -628,13 +640,82 @@ void  update_fdt_from_fw(void *fdt, void *fw_fdt)
+@@ -628,13 +668,82 @@ void  update_fdt_from_fw(void *fdt, void *fw_fdt)
  	/* address of the PHY device as provided by the firmware  */
  	copy_property(fdt, fw_fdt, "ethernet0/mdio@e14/ethernet-phy@1", "reg");
  
@@ -596,7 +638,7 @@ index b0a1484c0fa..be480a3c477 100644
  int ft_board_setup(void *blob, struct bd_info *bd)
  {
  	int node;
-@@ -644,6 +725,10 @@ int ft_board_setup(void *blob, struct bd_info *bd)
+@@ -644,6 +753,10 @@ int ft_board_setup(void *blob, struct bd_info *bd)
  	else
  		update_fdt_from_fw(blob, (void *)gd->fdt_blob);
  
@@ -607,7 +649,7 @@ index b0a1484c0fa..be480a3c477 100644
  	if (CONFIG_IS_ENABLED(FDT_SIMPLEFB)) {
  		node = fdt_node_offset_by_compatible(blob, -1, "simple-framebuffer");
  		if (node < 0)
-@@ -661,11 +746,337 @@ int ft_board_setup(void *blob, struct bd_info *bd)
+@@ -661,11 +774,337 @@ int ft_board_setup(void *blob, struct bd_info *bd)
  	return 0;
  }
  
@@ -947,7 +989,7 @@ index b0a1484c0fa..be480a3c477 100644
  }
  
  static bool is_rpi3(void)
-@@ -681,39 +1092,47 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -681,39 +1120,47 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	struct {
  		const char *fdt_compatible;
  		const char *acpi_scope;
@@ -1014,7 +1056,7 @@ index b0a1484c0fa..be480a3c477 100644
  				if (ret) {
  					node = -FDT_ERR_NOTFOUND;
  					break;
-@@ -722,11 +1141,15 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -722,11 +1169,15 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  				if (r.start == map[i].mmio_address)
  					break;
  
@@ -1033,7 +1075,7 @@ index b0a1484c0fa..be480a3c477 100644
  		}
  		acpigen_write_scope(ctx, map[i].acpi_scope);
  		acpigen_write_name_integer(ctx, "_STA", enabled ? 0xf : 0);
-@@ -734,34 +1157,38 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -734,34 +1185,38 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	}
  
  	/* GPIO quirks */
@@ -1080,7 +1122,7 @@ index b0a1484c0fa..be480a3c477 100644
  				acpigen_emit_namestring(ctx, "\\_SB.GDV1.DMTR");
  			acpigen_pop_len(ctx);
  		}
-@@ -771,15 +1198,13 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -771,15 +1226,13 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	uart_in_use = ~0;
  	mini_clock_rate = 0x1000000;
  
@@ -1100,7 +1142,7 @@ index b0a1484c0fa..be480a3c477 100644
  	if (!ret) {
  		if (uart_in_use == 0)
  			log_err("Invalid config: PL011 and MiniUART are both enabled.");
-@@ -802,7 +1227,8 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -802,7 +1255,8 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	return 0;
  }
  
@@ -1121,7 +1163,7 @@ index 9ac9d6768ca..4ce9b2e71c7 100644
 -boot_targets=mmc usb pxe dhcp
 +boot_targets=mmc usb nvme dhcp
 diff --git a/configs/rpi_arm64_defconfig b/configs/rpi_arm64_defconfig
-index 69e8e72c5d7..d862cfc3edb 100644
+index 69e8e72c5d7..3c6cbd8f6bf 100644
 --- a/configs/rpi_arm64_defconfig
 +++ b/configs/rpi_arm64_defconfig
 @@ -4,7 +4,7 @@ CONFIG_ARCH_BCM283X=y
@@ -1138,7 +1180,7 @@ index 69e8e72c5d7..d862cfc3edb 100644
  CONFIG_FDT_SIMPLEFB=y
  CONFIG_USE_PREBOOT=y
 -CONFIG_PREBOOT="pci enum; usb start;"
-+CONFIG_PREBOOT="pci enum; nvme scan; usb start; if load usb :auto ${scriptaddr} persistent.env; then env import -t ${scriptaddr} ${filesize}; fi; if load usb :auto ${scriptaddr} once.env; then env import -t ${scriptaddr} ${filesize}; fatrm usb :auto once.env; fi; env export -t ${scriptaddr}; fatwrite usb :auto ${scriptaddr} machine.env ${filesize}"
++CONFIG_PREBOOT="pci enum; nvme scan; usb start; if load usb :auto ${scriptaddr} persistent.env; then env import -t ${scriptaddr} ${filesize}; fi; if load usb :auto ${scriptaddr} once.env; then env import -t ${scriptaddr} ${filesize}; fatrm usb :auto once.env; fi; env export -t ${scriptaddr}; fatwrite usb :auto ${scriptaddr} machine.env ${filesize}; if test -n \"${blconfig_addr}\"; then fatwrite usb :auto ${blconfig_addr} eeprom.txt ${blconfig_size}; fi"
  CONFIG_SYS_PBSIZE=1049
  # CONFIG_DISPLAY_CPUINFO is not set
  # CONFIG_DISPLAY_BOARDINFO is not set
