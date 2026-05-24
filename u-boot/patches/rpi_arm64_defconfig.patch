@@ -428,7 +428,7 @@ index 1dc7ce50d1d..3532a980b75 100644
  
  void __efi_runtime EFIAPI efi_reset_system(
 diff --git a/board/raspberrypi/rpi/rpi.c b/board/raspberrypi/rpi/rpi.c
-index b0a1484c0fa..701fc42a220 100644
+index b0a1484c0fa..e54b56fe119 100644
 --- a/board/raspberrypi/rpi/rpi.c
 +++ b/board/raspberrypi/rpi/rpi.c
 @@ -3,33 +3,41 @@
@@ -492,10 +492,28 @@ index b0a1484c0fa..701fc42a220 100644
  
  static const struct rpi_model rpi_model_unknown = {
  	"Unknown model",
-@@ -472,6 +480,33 @@ static void set_serial_number(void)
+@@ -472,6 +480,51 @@ static void set_serial_number(void)
  	env_set("serial#", serial_string);
  }
  
++/*
++ * Locate the VPU-populated bootloader EEPROM config (blconfig nvmem-rmem
++ * region) in the firmware DT.  Some firmware versions don't add the
++ * "blconfig" alias, so fall back to a compatible-string scan.  Returns the
++ * node offset in *fw_fdt, or < 0 if not found.
++ */
++static int rpi_find_blconfig(void *fw_fdt)
++{
++	int node;
++
++	node = fdt_path_offset(fw_fdt, "blconfig");
++	if (node >= 0)
++		return node;
++
++	return fdt_node_offset_by_compatible(fw_fdt, -1,
++					     "raspberrypi,bootloader-config");
++}
++
 +/*
 + * Expose the VPU-populated bootloader EEPROM config (blconfig nvmem-rmem
 + * region in the firmware DT) as environment variables so that scripts can
@@ -510,7 +528,7 @@ index b0a1484c0fa..701fc42a220 100644
 +	if (!fw_fdt || fdt_magic(fw_fdt) != FDT_MAGIC)
 +		return;
 +
-+	node = fdt_path_offset(fw_fdt, "blconfig");
++	node = rpi_find_blconfig(fw_fdt);
 +	if (node < 0)
 +		return;
 +
@@ -526,7 +544,7 @@ index b0a1484c0fa..701fc42a220 100644
  int misc_init_r(void)
  {
  	set_fdt_addr();
-@@ -481,6 +516,7 @@ int misc_init_r(void)
+@@ -481,6 +534,7 @@ int misc_init_r(void)
  	set_board_info();
  #endif
  	set_serial_number();
@@ -534,7 +552,7 @@ index b0a1484c0fa..701fc42a220 100644
  
  	return 0;
  }
-@@ -546,6 +582,10 @@ static void get_board_revision(void)
+@@ -546,6 +600,10 @@ static void get_board_revision(void)
  		model = &models[rev_type];
  	}
  
@@ -545,7 +563,7 @@ index b0a1484c0fa..701fc42a220 100644
  	printf("RPI %s (0x%x)\n", model->name, revision);
  }
  
-@@ -591,7 +631,7 @@ int copy_property(void *dst, void *src, char *path, char *property)
+@@ -591,7 +649,7 @@ int copy_property(void *dst, void *src, char *path, char *property)
  }
  
  /* Copy tweaks from the firmware dtb to the loaded dtb */
@@ -554,7 +572,7 @@ index b0a1484c0fa..701fc42a220 100644
  {
  	/* Using dtb from firmware directly; leave it alone */
  	if (fdt == fw_fdt)
-@@ -628,13 +668,82 @@ void  update_fdt_from_fw(void *fdt, void *fw_fdt)
+@@ -628,13 +686,82 @@ void  update_fdt_from_fw(void *fdt, void *fw_fdt)
  	/* address of the PHY device as provided by the firmware  */
  	copy_property(fdt, fw_fdt, "ethernet0/mdio@e14/ethernet-phy@1", "reg");
  
@@ -638,7 +656,7 @@ index b0a1484c0fa..701fc42a220 100644
  int ft_board_setup(void *blob, struct bd_info *bd)
  {
  	int node;
-@@ -644,6 +753,10 @@ int ft_board_setup(void *blob, struct bd_info *bd)
+@@ -644,6 +771,10 @@ int ft_board_setup(void *blob, struct bd_info *bd)
  	else
  		update_fdt_from_fw(blob, (void *)gd->fdt_blob);
  
@@ -649,7 +667,7 @@ index b0a1484c0fa..701fc42a220 100644
  	if (CONFIG_IS_ENABLED(FDT_SIMPLEFB)) {
  		node = fdt_node_offset_by_compatible(blob, -1, "simple-framebuffer");
  		if (node < 0)
-@@ -661,11 +774,337 @@ int ft_board_setup(void *blob, struct bd_info *bd)
+@@ -661,11 +792,337 @@ int ft_board_setup(void *blob, struct bd_info *bd)
  	return 0;
  }
  
@@ -732,7 +750,7 @@ index b0a1484c0fa..701fc42a220 100644
 +	 * automatically, so the 4-cell encoding used by BCM2711/BCM2712
 +	 * (<addr_hi addr_lo size_hi size_lo>) is handled correctly.
 +	 */
-+	node = fdt_path_offset(fw_fdt, "blconfig");
++	node = rpi_find_blconfig(fw_fdt);
 +	if (node < 0)
 +		return false;
 +
@@ -989,7 +1007,7 @@ index b0a1484c0fa..701fc42a220 100644
  }
  
  static bool is_rpi3(void)
-@@ -681,39 +1120,47 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -681,39 +1138,47 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	struct {
  		const char *fdt_compatible;
  		const char *acpi_scope;
@@ -1056,7 +1074,7 @@ index b0a1484c0fa..701fc42a220 100644
  				if (ret) {
  					node = -FDT_ERR_NOTFOUND;
  					break;
-@@ -722,11 +1169,15 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -722,11 +1187,15 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  				if (r.start == map[i].mmio_address)
  					break;
  
@@ -1075,7 +1093,7 @@ index b0a1484c0fa..701fc42a220 100644
  		}
  		acpigen_write_scope(ctx, map[i].acpi_scope);
  		acpigen_write_name_integer(ctx, "_STA", enabled ? 0xf : 0);
-@@ -734,34 +1185,38 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -734,34 +1203,38 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	}
  
  	/* GPIO quirks */
@@ -1122,7 +1140,7 @@ index b0a1484c0fa..701fc42a220 100644
  				acpigen_emit_namestring(ctx, "\\_SB.GDV1.DMTR");
  			acpigen_pop_len(ctx);
  		}
-@@ -771,15 +1226,13 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -771,15 +1244,13 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	uart_in_use = ~0;
  	mini_clock_rate = 0x1000000;
  
@@ -1142,7 +1160,7 @@ index b0a1484c0fa..701fc42a220 100644
  	if (!ret) {
  		if (uart_in_use == 0)
  			log_err("Invalid config: PL011 and MiniUART are both enabled.");
-@@ -802,7 +1255,8 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -802,7 +1273,8 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	return 0;
  }
  
