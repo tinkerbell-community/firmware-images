@@ -1375,7 +1375,7 @@ index 9ac9d6768ca..4ce9b2e71c7 100644
 -boot_targets=mmc usb pxe dhcp
 +boot_targets=mmc usb nvme dhcp
 diff --git a/configs/rpi_arm64_defconfig b/configs/rpi_arm64_defconfig
-index 69e8e72c5d7..f2c805d02cf 100644
+index 69e8e72c5d7..b83cecde183 100644
 --- a/configs/rpi_arm64_defconfig
 +++ b/configs/rpi_arm64_defconfig
 @@ -4,7 +4,7 @@ CONFIG_ARCH_BCM283X=y
@@ -1392,7 +1392,7 @@ index 69e8e72c5d7..f2c805d02cf 100644
  CONFIG_FDT_SIMPLEFB=y
  CONFIG_USE_PREBOOT=y
 -CONFIG_PREBOOT="pci enum; usb start;"
-+CONFIG_PREBOOT="pci enum; nvme scan; usb start; if load usb :auto ${scriptaddr} persistent.env; then env import -t ${scriptaddr} ${filesize}; fi; if load usb :auto ${scriptaddr} once.env; then env import -t ${scriptaddr} ${filesize}; fatrm usb :auto once.env; fi; env export -t ${scriptaddr}; fatwrite usb :auto ${scriptaddr} machine.env ${filesize}; if test -n \"${pieeprom_addr}\"; then fatwrite usb :auto ${pieeprom_addr} pieeprom.bin ${pieeprom_size}; fi"
++CONFIG_PREBOOT="pci enum; nvme scan; usb start; if load usb :auto ${scriptaddr} persistent.env; then env import -t ${scriptaddr} ${filesize}; fi; if load usb :auto ${scriptaddr} once.env; then env import -t ${scriptaddr} ${filesize}; fatrm usb :auto once.env; fi; env export -t ${scriptaddr}; fatwrite usb :auto ${scriptaddr} machine.env ${filesize}; if test -n \"${pieeprom_addr}\"; then fatwrite usb :auto ${pieeprom_addr} pieeprom.bin ${pieeprom_size}; fi; if load usb :auto ${scriptaddr} recovery.000; then fatrm usb :auto recovery.000; fatrm usb :auto pieeprom.upd; fatrm usb :auto pieeprom.sig; fi"
  CONFIG_SYS_PBSIZE=1049
  # CONFIG_DISPLAY_CPUINFO is not set
  # CONFIG_DISPLAY_BOARDINFO is not set
