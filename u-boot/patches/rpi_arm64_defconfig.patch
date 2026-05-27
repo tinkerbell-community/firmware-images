@@ -190,10 +190,10 @@ index ec0f93dd850..30260fa5269 100644
 +	};
 +};
 diff --git a/arch/arm/mach-bcm283x/Kconfig b/arch/arm/mach-bcm283x/Kconfig
-index d9303e8c281..5df810b4709 100644
+index d9303e8c281..7a8c6585641 100644
 --- a/arch/arm/mach-bcm283x/Kconfig
 +++ b/arch/arm/mach-bcm283x/Kconfig
-@@ -56,6 +56,34 @@ config BCM2711_64B
+@@ -56,6 +56,35 @@ config BCM2711_64B
  	select BLOBLIST_ALLOC if GENERATE_ACPI_TABLE
  	select BLOBLIST_TABLES if GENERATE_ACPI_TABLE
  
@@ -216,8 +216,9 @@ index d9303e8c281..5df810b4709 100644
 +	# go through PSCI (provided by TF-A on the RPi 5 family). The
 +	# BCM2835 watchdog path remains compiled in for combined builds
 +	# (e.g. rpi_arm64_defconfig which also targets BCM2711), and is
-+	# selected at runtime via the FDT root compatible.
-+	select ARM_PSCI_FW
++	# selected at runtime via the FDT root compatible. ARM_SMCCC
++	# pulls in ARM_PSCI_FW and the __arm_smccc_smc/hvc asm stubs.
++	select ARM_SMCCC
 +	imply OF_UPSTREAM
 +	imply BOARD_TYPES
 +	imply CMD_POWEROFF
@@ -383,7 +384,7 @@ index 7a1de22e0ae..fa8f2533463 100644
  			 PTE_BLOCK_NON_SHARE |
  			 PTE_BLOCK_PXN | PTE_BLOCK_UXN
 diff --git a/arch/arm/mach-bcm283x/reset.c b/arch/arm/mach-bcm283x/reset.c
-index 1dc7ce50d1d..b3cc08e043a 100644
+index 1dc7ce50d1d..99cc0dfe4fd 100644
 --- a/arch/arm/mach-bcm283x/reset.c
 +++ b/arch/arm/mach-bcm283x/reset.c
 @@ -7,11 +7,32 @@
@@ -428,7 +429,7 @@ index 1dc7ce50d1d..b3cc08e043a 100644
  
  static void __efi_runtime
  __reset_cpu(struct bcm2835_wdog_regs *wdog_regs, ulong ticks)
-@@ -50,9 +73,51 @@ void reset_cpu(void)
+@@ -50,9 +73,23 @@ void reset_cpu(void)
  	struct bcm2835_wdog_regs *regs =
  		(struct bcm2835_wdog_regs *)BCM2835_WDOG_PHYSADDR;
  
@@ -440,47 +441,19 @@ index 1dc7ce50d1d..b3cc08e043a 100644
  	__reset_cpu(regs, 0);
  }
  
-+#ifdef CONFIG_CMD_POWEROFF
 +/*
-+ * Signal the VPU firmware to halt rather than reboot by setting partition 63
-+ * (value 0x555) in the RSTS register before triggering the watchdog.
-+ *
-+ * The firmware reads PM_RSTS on startup: partition 63 means "halt". With
-+ * POWER_OFF_ON_HALT=1 in the EEPROM bootloader configuration the PMIC is
-+ * commanded to cut power; without it the firmware waits for a power-button
-+ * press.
++ * `do_poweroff` is provided by drivers/firmware/psci.c when ARM_PSCI_FW is
++ * enabled: it calls PSCI SYSTEM_OFF, which TF-A on BCM2712 forwards to the
++ * EEPROM/PMIC sequence (honoring POWER_OFF_ON_HALT). On non-BCM2712 SoCs in
++ * a combined build PSCI isn't bound and the psci.c path returns failure;
++ * legacy BCM2835 wdog-RSTS-partition-63 poweroff is no longer wired up for
++ * those (RPi 3/4 standalone builds don't enable CMD_POWEROFF).
 + */
-+int do_poweroff(
-+			struct cmd_tbl *cmdtp,
-+			int flag,
-+			int argc, char *const argv[])
-+{
-+	struct bcm2835_wdog_regs *regs =
-+					(struct bcm2835_wdog_regs *)BCM2835_WDOG_PHYSADDR;
-+	u32 val;
-+
-+	if (rpi_is_bcm2712()) {
-+		psci_sys_poweroff();
-+		/* PSCI should not return; fall through to wdog as a safety net. */
-+	}
-+
-+	val = readl(&regs->rsts);
-+	val |= BCM2835_WDOG_PASSWORD;
-+	val |= BCM2835_WDOG_RSTS_RASPBERRYPI_HALT;
-+	writel(val, &regs->rsts);
-+
-+	__reset_cpu(regs, 0);
-+
-+	while (1) { }
-+
-+	return CMD_RET_SUCCESS;
-+}
-+#endif
 +
  #ifdef CONFIG_EFI_LOADER
  
  void __efi_runtime EFIAPI efi_reset_system(
-@@ -65,18 +130,25 @@ void __efi_runtime EFIAPI efi_reset_system(
+@@ -65,18 +102,25 @@ void __efi_runtime EFIAPI efi_reset_system(
  	if (reset_type == EFI_RESET_COLD ||
  	    reset_type == EFI_RESET_WARM ||
  	    reset_type == EFI_RESET_PLATFORM_SPECIFIC) {
@@ -517,7 +490,7 @@ index 1dc7ce50d1d..b3cc08e043a 100644
  	}
  
  	while (1) { }
-@@ -84,6 +156,7 @@ void __efi_runtime EFIAPI efi_reset_system(
+@@ -84,6 +128,7 @@ void __efi_runtime EFIAPI efi_reset_system(
  
  efi_status_t efi_reset_system_init(void)
  {
