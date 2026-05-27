@@ -190,10 +190,10 @@ index ec0f93dd850..30260fa5269 100644
 +	};
 +};
 diff --git a/arch/arm/mach-bcm283x/Kconfig b/arch/arm/mach-bcm283x/Kconfig
-index d9303e8c281..9d90fc336a5 100644
+index d9303e8c281..5df810b4709 100644
 --- a/arch/arm/mach-bcm283x/Kconfig
 +++ b/arch/arm/mach-bcm283x/Kconfig
-@@ -56,6 +56,28 @@ config BCM2711_64B
+@@ -56,6 +56,34 @@ config BCM2711_64B
  	select BLOBLIST_ALLOC if GENERATE_ACPI_TABLE
  	select BLOBLIST_TABLES if GENERATE_ACPI_TABLE
  
@@ -212,6 +212,12 @@ index d9303e8c281..9d90fc336a5 100644
 +	select BLOBLIST if GENERATE_ACPI_TABLE
 +	select BLOBLIST_ALLOC if GENERATE_ACPI_TABLE
 +	select BLOBLIST_TABLES if GENERATE_ACPI_TABLE
++	# BCM2712 has no BCM2835-style PM/WDOG block; reset and poweroff
++	# go through PSCI (provided by TF-A on the RPi 5 family). The
++	# BCM2835 watchdog path remains compiled in for combined builds
++	# (e.g. rpi_arm64_defconfig which also targets BCM2711), and is
++	# selected at runtime via the FDT root compatible.
++	select ARM_PSCI_FW
 +	imply OF_UPSTREAM
 +	imply BOARD_TYPES
 +	imply CMD_POWEROFF
@@ -377,10 +383,10 @@ index 7a1de22e0ae..fa8f2533463 100644
  			 PTE_BLOCK_NON_SHARE |
  			 PTE_BLOCK_PXN | PTE_BLOCK_UXN
 diff --git a/arch/arm/mach-bcm283x/reset.c b/arch/arm/mach-bcm283x/reset.c
-index 1dc7ce50d1d..3532a980b75 100644
+index 1dc7ce50d1d..b3cc08e043a 100644
 --- a/arch/arm/mach-bcm283x/reset.c
 +++ b/arch/arm/mach-bcm283x/reset.c
-@@ -7,6 +7,7 @@
+@@ -7,11 +7,32 @@
   */
  
  #include <config.h>
@@ -388,7 +394,49 @@ index 1dc7ce50d1d..3532a980b75 100644
  #include <cpu_func.h>
  #include <asm/io.h>
  #include <asm/arch/base.h>
-@@ -53,6 +54,38 @@ void reset_cpu(void)
+ #include <asm/arch/wdog.h>
++#include <asm/global_data.h>
+ #include <efi_loader.h>
++#include <fdt_support.h>
++#include <sysreset.h>
++#include <linux/psci.h>
++
++DECLARE_GLOBAL_DATA_PTR;
++
++/*
++ * BCM2712 (RPi 5 family) has no BCM2835-style PM/WDOG block; reset and
++ * poweroff are serviced by PSCI (TF-A in the EEPROM). Older BCM283x SoCs
++ * still use the watchdog/RSTS path below. Builds like rpi_arm64_defconfig
++ * may target both SoC families in a single binary, so dispatch at runtime
++ * based on the firmware-provided FDT.
++ */
++static bool rpi_is_bcm2712(void)
++{
++	return IS_ENABLED(CONFIG_ARM_PSCI_FW) &&
++	       gd && gd->fdt_blob &&
++	       !fdt_node_check_compatible(gd->fdt_blob, 0, "brcm,bcm2712");
++}
+ 
+ #define RESET_TIMEOUT 10
+ 
+@@ -26,6 +47,8 @@
+ #define BCM2835_WDOG_MAX_TIMEOUT	0x000fffff
+ 
+ __efi_runtime_data struct bcm2835_wdog_regs *wdog_regs;
++/* Latched at efi_reset_system_init() time so we don't need gd at runtime. */
++static __efi_runtime_data bool efi_use_psci;
+ 
+ static void __efi_runtime
+ __reset_cpu(struct bcm2835_wdog_regs *wdog_regs, ulong ticks)
+@@ -50,9 +73,51 @@ void reset_cpu(void)
+ 	struct bcm2835_wdog_regs *regs =
+ 		(struct bcm2835_wdog_regs *)BCM2835_WDOG_PHYSADDR;
+ 
++	if (rpi_is_bcm2712()) {
++		psci_sys_reset(SYSRESET_COLD);
++		/* PSCI should not return; fall through to wdog as a safety net. */
++	}
++
  	__reset_cpu(regs, 0);
  }
  
@@ -411,6 +459,11 @@ index 1dc7ce50d1d..3532a980b75 100644
 +					(struct bcm2835_wdog_regs *)BCM2835_WDOG_PHYSADDR;
 +	u32 val;
 +
++	if (rpi_is_bcm2712()) {
++		psci_sys_poweroff();
++		/* PSCI should not return; fall through to wdog as a safety net. */
++	}
++
 +	val = readl(&regs->rsts);
 +	val |= BCM2835_WDOG_PASSWORD;
 +	val |= BCM2835_WDOG_RSTS_RASPBERRYPI_HALT;
@@ -427,6 +480,51 @@ index 1dc7ce50d1d..3532a980b75 100644
  #ifdef CONFIG_EFI_LOADER
  
  void __efi_runtime EFIAPI efi_reset_system(
+@@ -65,18 +130,25 @@ void __efi_runtime EFIAPI efi_reset_system(
+ 	if (reset_type == EFI_RESET_COLD ||
+ 	    reset_type == EFI_RESET_WARM ||
+ 	    reset_type == EFI_RESET_PLATFORM_SPECIFIC) {
+-		__reset_cpu(wdog_regs, 0);
++		if (efi_use_psci)
++			psci_sys_reset(SYSRESET_COLD);
++		else
++			__reset_cpu(wdog_regs, 0);
+ 	} else if (reset_type == EFI_RESET_SHUTDOWN) {
+-		/*
+-		 * We set the watchdog hard reset bit here to distinguish this reset
+-		 * from the normal (full) reset. bootcode.bin will not reboot after a
+-		 * hard reset.
+-		 */
+-		val = readl(&wdog_regs->rsts);
+-		val |= BCM2835_WDOG_PASSWORD;
+-		val |= BCM2835_WDOG_RSTS_RASPBERRYPI_HALT;
+-		writel(val, &wdog_regs->rsts);
+-		__reset_cpu(wdog_regs, 0);
++		if (efi_use_psci) {
++			psci_sys_poweroff();
++		} else {
++			/*
++			 * We set the watchdog hard reset bit here to distinguish this reset
++			 * from the normal (full) reset. bootcode.bin will not reboot after a
++			 * hard reset.
++			 */
++			val = readl(&wdog_regs->rsts);
++			val |= BCM2835_WDOG_PASSWORD;
++			val |= BCM2835_WDOG_RSTS_RASPBERRYPI_HALT;
++			writel(val, &wdog_regs->rsts);
++			__reset_cpu(wdog_regs, 0);
++		}
+ 	}
+ 
+ 	while (1) { }
+@@ -84,6 +156,7 @@ void __efi_runtime EFIAPI efi_reset_system(
+ 
+ efi_status_t efi_reset_system_init(void)
+ {
++	efi_use_psci = rpi_is_bcm2712();
+ 	wdog_regs = (struct bcm2835_wdog_regs *)BCM2835_WDOG_PHYSADDR;
+ 	return efi_add_runtime_mmio(&wdog_regs, sizeof(*wdog_regs));
+ }
 diff --git a/board/raspberrypi/rpi/Makefile b/board/raspberrypi/rpi/Makefile
 index bb1b7cc630f..ad8886396f5 100644
 --- a/board/raspberrypi/rpi/Makefile
@@ -598,7 +696,7 @@ index 00000000000..d968bceb5d0
 +
 +#endif /* __RPI_BOOTSPI_H */
 diff --git a/board/raspberrypi/rpi/rpi.c b/board/raspberrypi/rpi/rpi.c
-index b0a1484c0fa..b4d3941b7ab 100644
+index b0a1484c0fa..8283d1eee36 100644
 --- a/board/raspberrypi/rpi/rpi.c
 +++ b/board/raspberrypi/rpi/rpi.c
 @@ -3,33 +3,44 @@
@@ -861,7 +959,7 @@ index b0a1484c0fa..b4d3941b7ab 100644
  	if (CONFIG_IS_ENABLED(FDT_SIMPLEFB)) {
  		node = fdt_node_offset_by_compatible(blob, -1, "simple-framebuffer");
  		if (node < 0)
-@@ -661,11 +816,337 @@ int ft_board_setup(void *blob, struct bd_info *bd)
+@@ -661,11 +816,324 @@ int ft_board_setup(void *blob, struct bd_info *bd)
  	return 0;
  }
  
@@ -890,7 +988,7 @@ index b0a1484c0fa..b4d3941b7ab 100644
 + */
 +#if defined(CONFIG_CYCLIC) && defined(CONFIG_DM_GPIO)
 +
-+#include <asm/arch/wdog.h>
++#include <linux/psci.h>
 +
 +/* GIO per-bank register offsets (each bank is 0x20 bytes) */
 +#define GIO_BANK_SIZE 0x20
@@ -969,26 +1067,13 @@ index b0a1484c0fa..b4d3941b7ab 100644
 +}
 +
 +/*
-+ * Signal the VPU firmware to halt (partition 63 in RSTS) before triggering
-+ * the watchdog reset.  The firmware reads RSTS on startup: partition 63 means
-+ * "halt".  With POWER_OFF_ON_HALT=1 in the EEPROM bootloader config the PMIC
-+ * is commanded to cut power; without it the firmware waits for a
-+ * power-button press before restarting.
++ * On BCM2712 there is no BCM2835-style VPU/PM watchdog: poweroff goes
++ * through PSCI (SYSTEM_OFF), which TF-A on the RPi 5 family forwards to
++ * the EEPROM/PMIC sequence honoring POWER_OFF_ON_HALT.
 + */
-+#define RPI_WDOG_RSTS_HALT 0x555 /* partition 63 – halt signal to VPU */
-+
 +static void rpi_signal_poweroff(void)
 +{
-+	struct bcm2835_wdog_regs *regs =
-+		(struct bcm2835_wdog_regs *)BCM2835_WDOG_PHYSADDR;
-+	u32 val;
-+
-+	val = readl(&regs->rsts);
-+	val |= BCM2835_WDOG_PASSWORD;
-+	val |= RPI_WDOG_RSTS_HALT;
-+	writel(val, &regs->rsts);
-+
-+	reset_cpu();
++	psci_sys_poweroff();
 +}
 +
 +static void rpi_power_btn_poll(struct cyclic_info *c)
@@ -1201,7 +1286,7 @@ index b0a1484c0fa..b4d3941b7ab 100644
  }
  
  static bool is_rpi3(void)
-@@ -681,39 +1162,47 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -681,39 +1149,47 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	struct {
  		const char *fdt_compatible;
  		const char *acpi_scope;
@@ -1268,7 +1353,7 @@ index b0a1484c0fa..b4d3941b7ab 100644
  				if (ret) {
  					node = -FDT_ERR_NOTFOUND;
  					break;
-@@ -722,11 +1211,15 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -722,11 +1198,15 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  				if (r.start == map[i].mmio_address)
  					break;
  
@@ -1287,7 +1372,7 @@ index b0a1484c0fa..b4d3941b7ab 100644
  		}
  		acpigen_write_scope(ctx, map[i].acpi_scope);
  		acpigen_write_name_integer(ctx, "_STA", enabled ? 0xf : 0);
-@@ -734,34 +1227,38 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -734,34 +1214,38 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	}
  
  	/* GPIO quirks */
@@ -1334,7 +1419,7 @@ index b0a1484c0fa..b4d3941b7ab 100644
  				acpigen_emit_namestring(ctx, "\\_SB.GDV1.DMTR");
  			acpigen_pop_len(ctx);
  		}
-@@ -771,15 +1268,13 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -771,15 +1255,13 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	uart_in_use = ~0;
  	mini_clock_rate = 0x1000000;
  
@@ -1354,7 +1439,7 @@ index b0a1484c0fa..b4d3941b7ab 100644
  	if (!ret) {
  		if (uart_in_use == 0)
  			log_err("Invalid config: PL011 and MiniUART are both enabled.");
-@@ -802,7 +1297,8 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
+@@ -802,7 +1284,8 @@ static int acpi_rpi_board_fill_ssdt(struct acpi_ctx *ctx)
  	return 0;
  }
  
