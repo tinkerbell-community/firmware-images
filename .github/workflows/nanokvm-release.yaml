@@ -12,14 +12,14 @@ on:
         required: false
         type: string
   push:
-    tags:
-      - 'v*'
+    # tags:
+    #   - 'v*'
     paths:
       - 'nanokvm/**'
 
 env:
   SOURCE_VERSION: ${{ inputs.source_version || 'v2.4.0-25' }}
-  APP_VERSION: ${{ inputs.app_version || 'v2.3.12' }}
+  APP_VERSION: ${{ inputs.app_version || 'v2.3.15' }}
 
 jobs:
   build-image:
